@@ -65,7 +65,7 @@ jobs:
             rust_target: aarch64-unknown-linux-gnu
             pdfium_runtime: lib/libpdfium.so
           - target: darwin-x64
-            runner: macos-13
+            runner: macos-14
             rust_target: x86_64-apple-darwin
             pdfium_runtime: lib/libpdfium.dylib
           - target: darwin-arm64
