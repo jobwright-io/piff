@@ -58,7 +58,10 @@ try {
   if (actualDigest !== expectedDigest) {
     throw new Error(`PDFium archive digest mismatch for ${asset}: expected ${expectedDigest}, got ${actualDigest}`)
   }
-  await execFileAsync('tar', ['-xzf', archivePath, '-C', extractPath])
+  const tarArguments = process.platform === 'win32'
+    ? ['--force-local', '-xzf', archivePath, '-C', extractPath]
+    : ['-xzf', archivePath, '-C', extractPath]
+  await execFileAsync('tar', tarArguments)
 
   const sourceRuntime = join(extractPath, runtimePath)
   await mkdir(outputPath, { recursive: true })
