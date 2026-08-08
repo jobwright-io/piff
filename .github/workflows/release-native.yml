@@ -60,20 +60,10 @@ jobs:
             runner: ubuntu-24.04
             rust_target: x86_64-unknown-linux-gnu
             pdfium_runtime: lib/libpdfium.so
-          - target: linux-x64-musl
-            runner: ubuntu-24.04
-            rust_target: x86_64-unknown-linux-musl
-            pdfium_runtime: lib/libpdfium.so
-            musl: true
           - target: linux-arm64-gnu
             runner: ubuntu-24.04-arm
             rust_target: aarch64-unknown-linux-gnu
             pdfium_runtime: lib/libpdfium.so
-          - target: linux-arm64-musl
-            runner: ubuntu-24.04-arm
-            rust_target: aarch64-unknown-linux-musl
-            pdfium_runtime: lib/libpdfium.so
-            musl: true
           - target: darwin-x64
             runner: macos-13
             rust_target: x86_64-apple-darwin
@@ -95,11 +85,6 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.rust_target }}
-
-      - name: Install musl linker
-        if: matrix.musl == true
-        shell: bash
-        run: sudo apt-get update && sudo apt-get install --yes musl-tools
 
       - name: Build N-API module
         shell: bash

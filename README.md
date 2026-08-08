@@ -137,7 +137,9 @@ and table blocks, malformed inputs, encrypted inputs, deterministic output, and 
 The `Release packages` workflow publishes `piffjs`, its platform native NPM packages, and the Rust
 crates. It runs for a published GitHub release or an explicit `workflow_dispatch` run with `publish`
 enabled. Repository Actions secrets named `NPM_TOKEN` and `CARGO_REGISTRY_TOKEN` are required. The
-React and browser adapter packages remain private until they have their own release contract.
+React and browser adapter packages remain private until they have their own release contract. The
+initial native release targets glibc Linux, macOS, and Windows; musl Linux support remains a separate
+cross-compilation task.
 
 ## Runtime boundary
 

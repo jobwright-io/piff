@@ -15,9 +15,7 @@ export function loadNativeBinding() {
     const packageNames = [
         runtimePackageName(),
         'piffjs-linux-x64-gnu',
-        'piffjs-linux-x64-musl',
         'piffjs-linux-arm64-gnu',
-        'piffjs-linux-arm64-musl',
         'piffjs-darwin-x64',
         'piffjs-darwin-arm64',
         'piffjs-win32-x64-msvc',
