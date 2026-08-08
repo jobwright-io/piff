@@ -1,0 +1,180 @@
+name: Native prebuilds
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish the staged native packages and generated core package to npm
+        required: true
+        default: false
+        type: boolean
+      pdfium_tag:
+        description: Chromium PDFium release number from bblanchon/pdfium-binaries
+        required: true
+        default: '7881'
+        type: string
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+env:
+  PDFIUM_RELEASE_TAG: ${{ inputs.pdfium_tag || '7881' }}
+
+jobs:
+  wasm:
+    name: Browser WASM artifact
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install Rust and WASM target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install wasm-bindgen CLI
+        run: cargo install wasm-bindgen-cli --version 0.2.127 --locked
+
+      - name: Build browser bindings
+        run: node scripts/build-wasm.mjs --output artifacts/wasm
+
+      - name: Upload browser bindings
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-wasm
+          path: artifacts/wasm
+          if-no-files-found: error
+          retention-days: 14
+
+  build:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-x64-gnu
+            runner: ubuntu-24.04
+            rust_target: x86_64-unknown-linux-gnu
+            pdfium_runtime: lib/libpdfium.so
+          - target: linux-x64-musl
+            runner: ubuntu-24.04
+            rust_target: x86_64-unknown-linux-musl
+            pdfium_runtime: lib/libpdfium.so
+            musl: true
+          - target: linux-arm64-gnu
+            runner: ubuntu-24.04-arm
+            rust_target: aarch64-unknown-linux-gnu
+            pdfium_runtime: lib/libpdfium.so
+          - target: linux-arm64-musl
+            runner: ubuntu-24.04-arm
+            rust_target: aarch64-unknown-linux-musl
+            pdfium_runtime: lib/libpdfium.so
+            musl: true
+          - target: darwin-x64
+            runner: macos-13
+            rust_target: x86_64-apple-darwin
+            pdfium_runtime: lib/libpdfium.dylib
+          - target: darwin-arm64
+            runner: macos-14
+            rust_target: aarch64-apple-darwin
+            pdfium_runtime: lib/libpdfium.dylib
+          - target: win32-x64-msvc
+            runner: windows-latest
+            rust_target: x86_64-pc-windows-msvc
+            pdfium_runtime: bin/pdfium.dll
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_target }}
+
+      - name: Install musl linker
+        if: matrix.musl == true
+        shell: bash
+        run: sudo apt-get update && sudo apt-get install --yes musl-tools
+
+      - name: Build N-API module
+        shell: bash
+        run: cargo build --locked --package pdf-diff-napi --release --target "${{ matrix.rust_target }}"
+
+      - name: Download pinned PDFium
+        shell: bash
+        run: node scripts/download-pdfium.mjs --target "${{ matrix.target }}" --tag "$PDFIUM_RELEASE_TAG" --output "$RUNNER_TEMP/pdfium"
+
+      - name: Copy native module to staging input
+        shell: bash
+        run: node scripts/copy-native-module.mjs --target-dir "target/${{ matrix.rust_target }}/release" --output "$RUNNER_TEMP/pdf-diff-napi.node"
+
+      - name: Stage platform package
+        shell: bash
+        run: node scripts/stage-native-package.mjs --target "${{ matrix.target }}" --native "$RUNNER_TEMP/pdf-diff-napi.node" --pdfium "$RUNNER_TEMP/pdfium/${{ matrix.pdfium_runtime }}" --pdfium-root "$RUNNER_TEMP/pdfium" --output "$RUNNER_TEMP/package"
+
+      - name: Upload staged package
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-${{ matrix.target }}
+          path: ${{ runner.temp }}/package
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: Publish native packages
+    needs: build
+    if: ${{ github.event_name == 'release' || inputs.publish == true }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.9.0
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install JavaScript dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build TypeScript packages
+        run: pnpm build
+
+      - name: Download staged packages
+        uses: actions/download-artifact@v4
+        with:
+          pattern: native-*
+          path: artifacts/native
+          merge-multiple: false
+
+      - name: Configure npm authentication
+        run: npm config set //registry.npmjs.org/:_authToken "$NODE_AUTH_TOKEN"
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish platform packages
+        run: node scripts/publish-native-packages.mjs --root artifacts/native
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Prepare core package metadata
+        run: node scripts/prepare-core-package.mjs --source packages/pdf-diffs --output artifacts/release/core
+
+      - name: Publish core package
+        run: npm publish artifacts/release/core --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

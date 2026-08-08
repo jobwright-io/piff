@@ -1,0 +1,11 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist",
+    "paths": {
+      "@pdf-differ/core": ["packages/pdf-diffs/dist/index.d.ts"]
+    }
+  },
+  "include": ["src/**/*.ts"]
+}

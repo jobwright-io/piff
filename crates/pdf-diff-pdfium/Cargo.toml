@@ -1,0 +1,15 @@
+[package]
+name = "pdf-diff-pdfium"
+version = "0.1.0"
+description = "PDFium-backed document loading and page rendering for pdf-diff"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+image.workspace = true
+pdf-diff-core = { path = "../pdf-diff-core" }
+pdf-diff-semantic = { path = "../pdf-diff-semantic" }
+pdfium-render = { version = "0.9.3", default-features = true }
+serde.workspace = true
+thiserror.workspace = true

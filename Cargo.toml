@@ -1,0 +1,21 @@
+[workspace]
+resolver = "2"
+members = [
+  "crates/pdf-diff-core",
+  "crates/pdf-diff-napi",
+  "crates/pdf-diff-pdfium",
+  "crates/pdf-diff-semantic",
+  "crates/pdf-diff-cli",
+  "crates/pdf-diff-wasm",
+]
+
+[workspace.package]
+edition = "2021"
+license = "MIT OR Apache-2.0"
+rust-version = "1.80"
+
+[workspace.dependencies]
+image = { version = "0.25", default-features = false, features = ["png"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"

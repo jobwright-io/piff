@@ -1,0 +1,29 @@
+{
+  "name": "pdf-differ",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.9.0",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "pnpm run build:core && pnpm run build:react && pnpm run build:wasm",
+    "build:core": "pnpm --filter @pdf-differ/core build",
+    "build:react": "pnpm --filter @pdf-differ/react build",
+    "build:wasm": "pnpm --filter @pdf-differ/wasm build",
+    "build:wasm-runtime": "node scripts/build-wasm.mjs",
+    "verify:cli": "cargo build --locked -p pdf-diff && node scripts/verify-cli.mjs",
+    "verify:regressions": "node scripts/verify-regressions.mjs",
+    "stage:native": "node scripts/stage-native-package.mjs",
+    "download:pdfium": "node scripts/download-pdfium.mjs",
+    "copy:native": "node scripts/copy-native-module.mjs",
+    "prepare:core-release": "node scripts/prepare-core-package.mjs",
+    "publish:native": "node scripts/publish-native-packages.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "typescript": "^5.9.0"
+  }
+}
