@@ -5,6 +5,7 @@ description = "Renderer-independent image comparison primitives for PDF diffs"
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
+repository.workspace = true
 
 [dependencies]
 image.workspace = true

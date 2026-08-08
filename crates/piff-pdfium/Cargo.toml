@@ -5,11 +5,12 @@ description = "PDFium-backed document loading and page rendering for piff"
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
+repository.workspace = true
 
 [dependencies]
 image.workspace = true
-piff-core = { path = "../piff-core" }
-piff-semantic = { path = "../piff-semantic" }
+piff-core = { path = "../piff-core", version = "0.1.0" }
+piff-semantic = { path = "../piff-semantic", version = "0.1.0" }
 pdfium-render = { version = "0.9.3", default-features = true }
 serde.workspace = true
 thiserror.workspace = true

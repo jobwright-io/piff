@@ -1,4 +1,4 @@
-name: Native prebuilds
+name: Release packages
 
 on:
   workflow_dispatch:
@@ -126,7 +126,7 @@ jobs:
           retention-days: 14
 
   publish:
-    name: Publish native packages
+    name: Publish NPM packages
     needs: build
     if: ${{ github.event_name == 'release' || inputs.publish == true }}
     runs-on: ubuntu-24.04
@@ -178,3 +178,30 @@ jobs:
         run: npm publish artifacts/release/core --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  publish-cargo:
+    name: Publish crates.io packages
+    needs: build
+    if: ${{ github.event_name == 'release' || inputs.publish == true }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Validate crate packages
+        run: cargo package --workspace --locked --no-verify
+
+      - name: Publish crates in dependency order
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          set -euo pipefail
+          for package in piff-core piff-semantic piff-pdfium piff-napi piff-wasm piff; do
+            cargo publish --locked --package "$package"
+          done

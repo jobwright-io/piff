@@ -5,6 +5,7 @@ description = "Renderer-independent positioned text comparison for piff"
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
+repository.workspace = true
 
 [dependencies]
 serde.workspace = true

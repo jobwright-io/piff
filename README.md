@@ -132,6 +132,14 @@ The regression suite uses ordinary PDF bytes and covers wording changes, additio
 page insertion, deletion and movement, translation, figures, repeated headers and footers, list
 and table blocks, malformed inputs, encrypted inputs, deterministic output, and resource limits.
 
+## Release deployment
+
+The `Release packages` workflow publishes the core NPM package, platform native NPM packages, and
+the Rust crates. It runs for a published GitHub release or an explicit `workflow_dispatch` run with
+`publish` enabled. Repository Actions secrets named `NPM_TOKEN` and `CARGO_REGISTRY_TOKEN` are
+required. The React and browser adapter packages remain private until they have their own release
+contract.
+
 ## Runtime boundary
 
 Piff is generic. It does not embed CV-specific concepts, OCR policy, document editing, or an
