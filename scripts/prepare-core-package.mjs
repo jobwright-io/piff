@@ -21,7 +21,7 @@ await cp(join(source, 'dist'), join(output, 'dist'), { recursive: true })
 
 packageJson.private = false
 packageJson.optionalDependencies = Object.fromEntries(
-  TARGETS.map((target) => [`@pdf-differ/core-${target}`, packageJson.version]),
+  TARGETS.map((target) => [`piff-${target}`, packageJson.version]),
 )
 packageJson.publishConfig = { ...(packageJson.publishConfig ?? {}), access: 'public' }
 

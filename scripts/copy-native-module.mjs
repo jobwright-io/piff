@@ -7,9 +7,9 @@ const outputPath = resolve(required(args, 'output'))
 
 const candidates = (await readdir(targetDirectory))
   .filter((name) =>
-    name === 'pdf_diff_napi.dll' ||
-    name === 'libpdf_diff_napi.so' ||
-    name === 'libpdf_diff_napi.dylib',
+    name === 'piff_napi.dll' ||
+    name === 'libpiff_napi.so' ||
+    name === 'libpiff_napi.dylib',
   )
 
 if (candidates.length !== 1 || (await stat(join(targetDirectory, candidates[0]))).isFile() !== true) {

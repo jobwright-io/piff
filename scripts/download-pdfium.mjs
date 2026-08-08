@@ -40,7 +40,7 @@ if (targetInfo === undefined) {
 
 const [asset, runtimePath] = targetInfo
 const archiveUrl = `https://github.com/bblanchon/pdfium-binaries/releases/download/chromium/${releaseTag}/${asset}`
-const temporaryRoot = await mkdtemp(join(tmpdir(), 'pdf-differ-pdfium-'))
+const temporaryRoot = await mkdtemp(join(tmpdir(), 'piff-pdfium-'))
 const archivePath = join(temporaryRoot, asset)
 const extractPath = join(temporaryRoot, 'extract')
 

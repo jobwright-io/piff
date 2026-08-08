@@ -571,20 +571,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
-name = "pdf-diff"
+name = "piff"
 version = "0.1.0"
 dependencies = [
  "clap",
- "pdf-diff-core",
- "pdf-diff-pdfium",
- "pdf-diff-semantic",
+ "piff-core",
+ "piff-pdfium",
+ "piff-semantic",
  "serde",
  "serde_json",
  "thiserror",
 ]
 
 [[package]]
-name = "pdf-diff-core"
+name = "piff-core"
 version = "0.1.0"
 dependencies = [
  "image",
@@ -593,44 +593,44 @@ dependencies = [
 ]
 
 [[package]]
-name = "pdf-diff-napi"
+name = "piff-napi"
 version = "0.1.0"
 dependencies = [
  "napi",
  "napi-build",
  "napi-derive",
- "pdf-diff-core",
- "pdf-diff-pdfium",
- "pdf-diff-semantic",
+ "piff-core",
+ "piff-pdfium",
+ "piff-semantic",
  "serde_json",
 ]
 
 [[package]]
-name = "pdf-diff-pdfium"
+name = "piff-pdfium"
 version = "0.1.0"
 dependencies = [
  "image",
- "pdf-diff-core",
- "pdf-diff-semantic",
+ "piff-core",
+ "piff-semantic",
  "pdfium-render",
  "serde",
  "thiserror",
 ]
 
 [[package]]
-name = "pdf-diff-semantic"
+name = "piff-semantic"
 version = "0.1.0"
 dependencies = [
  "serde",
 ]
 
 [[package]]
-name = "pdf-diff-wasm"
+name = "piff-wasm"
 version = "0.1.0"
 dependencies = [
- "pdf-diff-core",
- "pdf-diff-pdfium",
- "pdf-diff-semantic",
+ "piff-core",
+ "piff-pdfium",
+ "piff-semantic",
  "serde",
  "serde_json",
  "wasm-bindgen",

@@ -11,7 +11,7 @@
     "types": ["node", "react", "react-dom"],
     "baseUrl": ".",
     "paths": {
-      "@pdf-differ/core": ["packages/pdf-diffs/src/index.ts"]
+      "piff": ["packages/piff/src/index.ts"]
     }
   },
   "include": ["packages/**/*.ts", "packages/**/*.tsx"]

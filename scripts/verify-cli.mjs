@@ -11,9 +11,9 @@ import { createTextPdf } from './pdf-fixtures.mjs'
 
 const execFileAsync = promisify(execFile)
 const projectRoot = resolve(fileURLToPath(new URL('..', import.meta.url)))
-const binary = process.env.PIFF_BIN ?? process.env.PDF_DIFF_BIN ?? join(projectRoot, 'target/debug/piff')
+const binary = process.env.PIFF_BIN ?? join(projectRoot, 'target/debug/piff')
 const pdfium = process.env.PDFIUM_LIBRARY_PATH ?? join(projectRoot, 'artifacts/pdfium/linux-x64/lib/libpdfium.so')
-const temporaryDirectory = await mkdtemp(join(tmpdir(), 'pdf-differ-cli-'))
+const temporaryDirectory = await mkdtemp(join(tmpdir(), 'piff-cli-'))
 
 try {
   const beforePath = join(temporaryDirectory, 'before.pdf')
@@ -28,7 +28,7 @@ try {
     schema_version: 1,
     ok: true,
     engine: {
-      name: 'pdf-differ',
+      name: 'piff',
       version: '0.1.0',
       renderer: 'pdfium',
       binding: 'pdfium-render',

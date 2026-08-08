@@ -1,12 +1,12 @@
 [workspace]
 resolver = "2"
 members = [
-  "crates/pdf-diff-core",
-  "crates/pdf-diff-napi",
-  "crates/pdf-diff-pdfium",
-  "crates/pdf-diff-semantic",
-  "crates/pdf-diff-cli",
-  "crates/pdf-diff-wasm",
+  "crates/piff-core",
+  "crates/piff-napi",
+  "crates/piff-pdfium",
+  "crates/piff-semantic",
+  "crates/piff-cli",
+  "crates/piff-wasm",
 ]
 
 [workspace.package]

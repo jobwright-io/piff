@@ -5,10 +5,10 @@ import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const projectRoot = resolve(fileURLToPath(new URL('..', import.meta.url)))
-process.env.PDF_DIFF_NATIVE_MODULE ??= join(projectRoot, 'artifacts/pdf-diff.linux-x64-gnu.node')
+process.env.PIFF_NATIVE_MODULE ??= join(projectRoot, 'artifacts/piff.linux-x64-gnu.node')
 process.env.PDFIUM_LIBRARY_PATH ??= join(projectRoot, 'artifacts/pdfium/linux-x64/lib/libpdfium.so')
 
-const { PdfDiffError, PdfDiffSession, diffPdf } = await import('../packages/pdf-diffs/dist/index.js')
+const { PiffError, PiffSession, piff } = await import('../packages/piff/dist/index.js')
 const { createTextPdf } = await import('./pdf-fixtures.mjs')
 
 const semanticOptions = {
@@ -274,7 +274,7 @@ const figureCases = [
   },
 ]
 for (const fixture of figureCases) {
-  const result = await diffPdf(
+  const result = await piff(
     await readFile(join(figureScenarioDirectory, `${fixture.files}-before.pdf`)),
     await readFile(join(figureScenarioDirectory, `${fixture.files}-after.pdf`)),
     { ...semanticOptions, pageMatching: 'index' },
@@ -298,24 +298,24 @@ for (const fixture of figureCases) {
 }
 
 for (const fixture of cases) {
-  const result = await diffPdf(fixture.before, fixture.after, semanticOptions)
+  const result = await piff(fixture.before, fixture.after, semanticOptions)
   assert.equal(result.schemaVersion, 1)
   assert.deepEqual(result.engine, {
-    name: 'pdf-differ',
+    name: 'piff',
     version: '0.1.0',
     renderer: 'pdfium',
     binding: 'pdfium-render',
   })
   fixture.verify(result)
   if (fixture.verifyFastEqual !== undefined) {
-    const equalitySession = await PdfDiffSession.open(fixture.before, fixture.after, semanticOptions)
+    const equalitySession = await PiffSession.open(fixture.before, fixture.after, semanticOptions)
     try {
       assert.equal(await equalitySession.isEqual(), fixture.verifyFastEqual)
     } finally {
       await equalitySession.close()
     }
   }
-  const session = await PdfDiffSession.open(fixture.before, fixture.after, semanticOptions)
+  const session = await PiffSession.open(fixture.before, fixture.after, semanticOptions)
   try {
     const preview = await session.renderPageDiff(0, { view: 'diff' })
     assert.equal(preview[0], 0x89)
@@ -338,8 +338,8 @@ for (const fixture of cases) {
   }
 }
 
-const deterministicFirst = await diffPdf(cases[1].before, cases[1].after, semanticOptions)
-const deterministicSecond = await diffPdf(cases[1].before, cases[1].after, semanticOptions)
+const deterministicFirst = await piff(cases[1].before, cases[1].after, semanticOptions)
+const deterministicSecond = await piff(cases[1].before, cases[1].after, semanticOptions)
 const comparableResult = (result) => ({
   equal: result.equal,
   before: result.before,
@@ -350,7 +350,7 @@ const comparableResult = (result) => ({
 assert.deepEqual(comparableResult(deterministicFirst), comparableResult(deterministicSecond))
 report.push({ name: 'sdk-deterministic-semantic-output', passed: true })
 
-const contextResult = await diffPdf(
+const contextResult = await piff(
   createTextPdf([['Stable heading.', 'The original sentence.', 'Stable closing note.']]),
   createTextPdf([['Stable heading.', 'The revised sentence.', 'Stable closing note.']]),
   { ...semanticOptions, contextLines: 0 },
@@ -360,7 +360,7 @@ assert.ok(contextHunkLines.length > 0)
 assert.ok(contextHunkLines.every((line) => line.kind !== 'context'))
 report.push({ name: 'sdk-context-lines-option', passed: true })
 
-const reflowResult = await diffPdf(
+const reflowResult = await piff(
   createTextPdf([[
     { text: 'Experienced engineer with ten', x: 72, y: 700 },
     { text: 'years building reliable systems.', x: 72, y: 680 },
@@ -379,7 +379,7 @@ assert.equal(reflowResult.pages[0].semantic?.textDiff?.changedLines, 0)
 assert.equal(reflowResult.textDiff?.pages[0].textDiff?.hunks.length, 0)
 report.push({ name: 'sdk-reflow-aware-text-matching', passed: true })
 
-const blockInsertionResult = await diffPdf(
+const blockInsertionResult = await piff(
   createTextPdf([['Stable heading.', 'Stable closing note.']]),
   createTextPdf([[
     'Stable heading.',
@@ -401,7 +401,7 @@ assert.ok(insertedBlock.textDiff.hunks.length > 0)
 assert.ok(blockInsertionResult.textDiff?.pages[0].blocks.some((block) => block.id === insertedBlock.id))
 report.push({ name: 'sdk-side-aware-block-insertion', passed: true })
 
-const structuralResult = await diffPdf(
+const structuralResult = await piff(
   createTextPdf([[
     { text: '- Rust and TypeScript', x: 72, y: 700 },
     { text: '| Skill | Level |', x: 72, y: 640 },
@@ -421,7 +421,7 @@ assert.ok(structuralKinds.has('list-item'))
 assert.ok(structuralKinds.has('table-row'))
 report.push({ name: 'sdk-structural-list-and-table-blocks', passed: true })
 
-const singlePageHeadingResult = await diffPdf(
+const singlePageHeadingResult = await piff(
   createTextPdf([[{ text: 'Single page heading', x: 72, y: 750 }]]),
   createTextPdf([[{ text: 'Single page heading revised', x: 72, y: 750 }]]),
   semanticOptions,
@@ -439,7 +439,7 @@ const readingOrderPdf = createTextPdf([[
   { text: 'Right two', x: 320, y: 670 },
 ]])
 for (const readingOrder of ['auto', 'rows', 'columns']) {
-  const readingOrderResult = await diffPdf(
+  const readingOrderResult = await piff(
     readingOrderPdf,
     readingOrderPdf,
     { ...semanticOptions, readingOrder },
@@ -449,47 +449,47 @@ for (const readingOrder of ['auto', 'rows', 'columns']) {
 report.push({ name: 'sdk-reading-order-options', passed: true })
 
 await assert.rejects(
-  () => diffPdf(
+  () => piff(
     createTextPdf([['Invalid options.']]),
     createTextPdf([['Invalid options.']]),
     { ...semanticOptions, dpi: 0 },
   ),
-  (error) => error instanceof PdfDiffError && error.code === 'invalid-options',
+  (error) => error instanceof PiffError && error.code === 'invalid-options',
 )
 await assert.rejects(
-  () => diffPdf(
+  () => piff(
     createTextPdf([['Invalid reading order.']]),
     createTextPdf([['Invalid reading order.']]),
     { ...semanticOptions, readingOrder: 'diagonal' },
   ),
-  (error) => error instanceof PdfDiffError
+  (error) => error instanceof PiffError
     && error.code === 'invalid-options'
     && /readingOrder/.test(error.message),
 )
 await assert.rejects(
-  () => diffPdf(
+  () => piff(
     createTextPdf([['Invalid context.']]),
     createTextPdf([['Invalid context.']]),
     { ...semanticOptions, contextLines: 101 },
   ),
-  (error) => error instanceof PdfDiffError && error.code === 'invalid-options',
+  (error) => error instanceof PiffError && error.code === 'invalid-options',
 )
 
 const stablePdf = cases[0].before
 await assert.rejects(
-  () => diffPdf(Buffer.from('%PDF-1.4\n% malformed fixture'), stablePdf, semanticOptions),
+  () => piff(Buffer.from('%PDF-1.4\n% malformed fixture'), stablePdf, semanticOptions),
   /Pdfium|PDF|inspect/i,
 )
 await assert.rejects(
-  () => diffPdf(stablePdf, stablePdf, { ...semanticOptions, limits: { maxInputBytes: 1 } }),
+  () => piff(stablePdf, stablePdf, { ...semanticOptions, limits: { maxInputBytes: 1 } }),
   /exceeding.*input limit/i,
 )
 await assert.rejects(
-  () => diffPdf(cases[2].before, cases[2].before, { ...semanticOptions, pageMatching: 'index', limits: { maxPages: 1 } }),
+  () => piff(cases[2].before, cases[2].before, { ...semanticOptions, pageMatching: 'index', limits: { maxPages: 1 } }),
   /pages.*limit/i,
 )
 await assert.rejects(
-  () => diffPdf(stablePdf, stablePdf, { ...semanticOptions, pageMatching: 'index', limits: { maxPagePixels: 1 } }),
+  () => piff(stablePdf, stablePdf, { ...semanticOptions, pageMatching: 'index', limits: { maxPagePixels: 1 } }),
   /pixels.*limit/i,
 )
 report.push({ name: 'malformed-and-resource-limits', passed: true })
@@ -497,7 +497,7 @@ report.push({ name: 'malformed-and-resource-limits', passed: true })
 const referenceBeforePath = join(projectRoot, 'references/pdfium-render/test/text-test.pdf')
 const referenceAfterPath = join(projectRoot, 'references/pdfium-render/test/export-test.pdf')
 if (await fileExists(referenceBeforePath) && await fileExists(referenceAfterPath)) {
-  const referenceResult = await diffPdf(
+  const referenceResult = await piff(
     await readFile(referenceBeforePath),
     await readFile(referenceAfterPath),
     semanticOptions,
@@ -524,12 +524,12 @@ const encryptedPath = join(projectRoot, 'references/pdf-inspector/tests/fixtures
 if (await fileExists(encryptedPath)) {
   const encrypted = await readFile(encryptedPath)
   await assert.rejects(
-    () => diffPdf(encrypted, encrypted, { ...semanticOptions, password: 'wrong' }),
-    (error) => error instanceof PdfDiffError && error.code === 'password-required',
+    () => piff(encrypted, encrypted, { ...semanticOptions, password: 'wrong' }),
+    (error) => error instanceof PiffError && error.code === 'password-required',
   )
-  const decrypted = await diffPdf(encrypted, encrypted, { ...semanticOptions, password: 'secret123' })
+  const decrypted = await piff(encrypted, encrypted, { ...semanticOptions, password: 'secret123' })
   assert.equal(decrypted.equal, true)
-  const decryptedWithSeparatePasswords = await diffPdf(encrypted, encrypted, {
+  const decryptedWithSeparatePasswords = await piff(encrypted, encrypted, {
     ...semanticOptions,
     beforePassword: 'secret123',
     afterPassword: 'secret123',

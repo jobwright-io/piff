@@ -1,0 +1,18 @@
+[package]
+name = "piff-wasm"
+version = "0.1.0"
+description = "Browser WASM bindings for the PDFium-backed piff engine"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+piff-core = { path = "../piff-core" }
+piff-pdfium = { path = "../piff-pdfium" }
+piff-semantic = { path = "../piff-semantic" }
+serde.workspace = true
+serde_json.workspace = true
+wasm-bindgen = "0.2"

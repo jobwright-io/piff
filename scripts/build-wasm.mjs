@@ -7,7 +7,7 @@ const execFileAsync = promisify(execFile)
 const args = parseArgs(process.argv.slice(2))
 const output = resolve(args.output ?? 'artifacts/wasm')
 const target = 'wasm32-unknown-unknown'
-const wasmPath = resolve('target', target, 'release', 'pdf_diff_wasm.wasm')
+const wasmPath = resolve('target', target, 'release', 'piff_wasm.wasm')
 
 await mkdir(output, { recursive: true })
 await execFileAsync('cargo', [
@@ -15,7 +15,7 @@ await execFileAsync('cargo', [
   '--locked',
   '--release',
   '--package',
-  'pdf-diff-wasm',
+  'piff-wasm',
   '--target',
   target,
 ], { stdio: 'inherit' })
@@ -26,7 +26,7 @@ await execFileAsync('wasm-bindgen', [
   '--out-dir',
   output,
 ], { stdio: 'inherit' })
-console.log(`built browser WASM bindings in ${join(output, 'pdf_diff_wasm.js')}`)
+console.log(`built browser WASM bindings in ${join(output, 'piff_wasm.js')}`)
 
 function parseArgs(values) {
   const result = {}

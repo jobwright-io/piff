@@ -27,13 +27,13 @@ importers:
         specifier: ^5.9.0
         version: 5.9.3
 
-  packages/pdf-diffs: {}
+  packages/piff: {}
 
-  packages/pdf-diffs-react:
+  packages/piff-react:
     dependencies:
-      '@pdf-differ/core':
+      'piff':
         specifier: workspace:*
-        version: link:../pdf-diffs
+        version: link:../piff
       react:
         specifier: '>=18'
         version: 19.2.8
@@ -41,11 +41,11 @@ importers:
         specifier: '>=18'
         version: 19.2.8(react@19.2.8)
 
-  packages/pdf-diffs-wasm:
+  packages/piff-wasm:
     dependencies:
-      '@pdf-differ/core':
+      'piff':
         specifier: workspace:*
-        version: link:../pdf-diffs
+        version: link:../piff
 
 packages:
 

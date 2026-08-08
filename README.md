@@ -23,7 +23,7 @@ pnpm build
 Build the CLI:
 
 ```sh
-cargo build --locked -p pdf-diff --release
+cargo build --locked -p piff --release
 ```
 
 Local CLI runs need a PDFium library. Download or provide one, then pass its path explicitly:
@@ -56,12 +56,12 @@ failed, and `130` means cancellation.
 
 ## TypeScript SDK
 
-The core package is `@pdf-differ/core`:
+The core package is `piff`:
 
 ```ts
-import { diffPdf } from '@pdf-differ/core'
+import { piff } from 'piff'
 
-const result = await diffPdf(beforePdf, afterPdf, {
+const result = await piff(beforePdf, afterPdf, {
   mode: 'semantic',
   pageMatching: 'sequence',
   readingOrder: 'auto',
@@ -82,10 +82,10 @@ Additions are anchored only to the after side. Removals are anchored only to the
 Modifications, moves, and reflows carry both sides when both documents contain the block. Repeated
 edge-positioned text can be labeled `header` or `footer`; a single-page heading remains `body`.
 
-Use `PdfDiffSession` when previews should be rendered lazily:
+Use `PiffSession` when previews should be rendered lazily:
 
 ```ts
-const session = await PdfDiffSession.open(beforePdf, afterPdf, { mode: 'semantic' })
+const session = await PiffSession.open(beforePdf, afterPdf, { mode: 'semantic' })
 try {
   const result = await session.compare({
     signal: abortController.signal,
@@ -101,17 +101,17 @@ try {
 
 ## Workspace
 
-- `crates/pdf-diff-core/` contains raster comparison, alignment, regions, and page fingerprints.
-- `crates/pdf-diff-pdfium/` owns PDF loading, rendering, page pairing, figures, and the public
+- `crates/piff-core/` contains raster comparison, alignment, regions, and page fingerprints.
+- `crates/piff-pdfium/` owns PDF loading, rendering, page pairing, figures, and the public
   native result model.
-- `crates/pdf-diff-semantic/` owns positioned text normalization, structure, matching, roles, and
+- `crates/piff-semantic/` owns positioned text normalization, structure, matching, roles, and
   Git-like hunks.
-- `crates/pdf-diff-napi/` exposes the asynchronous Node and Bun boundary.
-- `crates/pdf-diff-wasm/` exposes the browser runtime boundary.
-- `crates/pdf-diff-cli/` builds the `piff` binary.
-- `packages/pdf-diffs/` contains the typed Node and Bun SDK.
-- `packages/pdf-diffs-wasm/` contains the synchronous WASM adapter and worker boundary.
-- `packages/pdf-diffs-react/` is an optional consumer-facing React adapter.
+- `crates/piff-napi/` exposes the asynchronous Node and Bun boundary.
+- `crates/piff-wasm/` exposes the browser runtime boundary.
+- `crates/piff-cli/` builds the `piff` binary.
+- `packages/piff/` contains the typed Node and Bun SDK.
+- `packages/piff-wasm/` contains the synchronous WASM adapter and worker boundary.
+- `packages/piff-react/` is an optional consumer-facing React adapter.
 - `scripts/` contains fixture generation, native staging, and regression checks.
 
 ## Development

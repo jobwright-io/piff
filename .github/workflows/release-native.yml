@@ -103,7 +103,7 @@ jobs:
 
       - name: Build N-API module
         shell: bash
-        run: cargo build --locked --package pdf-diff-napi --release --target "${{ matrix.rust_target }}"
+        run: cargo build --locked --package piff-napi --release --target "${{ matrix.rust_target }}"
 
       - name: Download pinned PDFium
         shell: bash
@@ -111,11 +111,11 @@ jobs:
 
       - name: Copy native module to staging input
         shell: bash
-        run: node scripts/copy-native-module.mjs --target-dir "target/${{ matrix.rust_target }}/release" --output "$RUNNER_TEMP/pdf-diff-napi.node"
+        run: node scripts/copy-native-module.mjs --target-dir "target/${{ matrix.rust_target }}/release" --output "$RUNNER_TEMP/piff-napi.node"
 
       - name: Stage platform package
         shell: bash
-        run: node scripts/stage-native-package.mjs --target "${{ matrix.target }}" --native "$RUNNER_TEMP/pdf-diff-napi.node" --pdfium "$RUNNER_TEMP/pdfium/${{ matrix.pdfium_runtime }}" --pdfium-root "$RUNNER_TEMP/pdfium" --output "$RUNNER_TEMP/package"
+        run: node scripts/stage-native-package.mjs --target "${{ matrix.target }}" --native "$RUNNER_TEMP/piff-napi.node" --pdfium "$RUNNER_TEMP/pdfium/${{ matrix.pdfium_runtime }}" --pdfium-root "$RUNNER_TEMP/pdfium" --output "$RUNNER_TEMP/package"
 
       - name: Upload staged package
         uses: actions/upload-artifact@v4
@@ -172,7 +172,7 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Prepare core package metadata
-        run: node scripts/prepare-core-package.mjs --source packages/pdf-diffs --output artifacts/release/core
+        run: node scripts/prepare-core-package.mjs --source packages/piff --output artifacts/release/core
 
       - name: Publish core package
         run: npm publish artifacts/release/core --access public
