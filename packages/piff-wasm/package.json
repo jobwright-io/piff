@@ -16,6 +16,6 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "piff": "workspace:*"
+    "piffjs": "workspace:*"
   }
 }

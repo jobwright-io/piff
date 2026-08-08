@@ -26,7 +26,7 @@ if (!TARGETS.has(target)) {
 await assertFile(nativePath, 'native module')
 await assertFile(pdfiumPath, 'PDFium library')
 
-const packageName = `piff-${target}`
+const packageName = `piffjs-${target}`
 const nativeFile = `piff_napi.${target}.node`
 const pdfiumFile = basename(pdfiumPath)
 const packagePdfiumPath = join(outputPath, 'pdfium', pdfiumFile)
@@ -54,7 +54,7 @@ await writeFile(
   `${JSON.stringify({
     name: packageName,
     version: packageVersion,
-    description: `Native piff runtime for ${target}`,
+    description: `Native piffjs runtime for ${target}`,
     license: 'MIT OR Apache-2.0',
     type: 'commonjs',
     main: 'index.js',

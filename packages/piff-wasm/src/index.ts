@@ -13,7 +13,7 @@ import type {
   PdfSemanticTextBlockKind,
   PdfSemanticTextBlockRole,
   PdfSemanticTextBlockDiff,
-} from 'piff'
+} from 'piffjs'
 
 type RawTextExtractionSummary = {
   status: PdfTextExtractionStatus

@@ -31,7 +31,7 @@ importers:
 
   packages/piff-react:
     dependencies:
-      'piff':
+      piffjs:
         specifier: workspace:*
         version: link:../piff
       react:
@@ -43,7 +43,7 @@ importers:
 
   packages/piff-wasm:
     dependencies:
-      'piff':
+      piffjs:
         specifier: workspace:*
         version: link:../piff
 

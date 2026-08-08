@@ -84,13 +84,13 @@ export function loadNativeBinding(): NativeBinding {
   )
   const packageNames = [
     runtimePackageName(),
-    'piff-linux-x64-gnu',
-    'piff-linux-x64-musl',
-    'piff-linux-arm64-gnu',
-    'piff-linux-arm64-musl',
-    'piff-darwin-x64',
-    'piff-darwin-arm64',
-    'piff-win32-x64-msvc',
+    'piffjs-linux-x64-gnu',
+    'piffjs-linux-x64-musl',
+    'piffjs-linux-arm64-gnu',
+    'piffjs-linux-arm64-musl',
+    'piffjs-darwin-x64',
+    'piffjs-darwin-arm64',
+    'piffjs-win32-x64-msvc',
   ].filter((name, index, names): name is string =>
     name !== undefined && names.indexOf(name) === index,
   )
@@ -117,7 +117,7 @@ export function loadNativeBinding(): NativeBinding {
 
 function runtimePackageName(): string | undefined {
   const target = runtimeTarget()
-  return target === undefined ? undefined : `piff-${target}`
+  return target === undefined ? undefined : `piffjs-${target}`
 }
 
 function runtimeTarget(): string | undefined {

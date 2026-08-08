@@ -11,7 +11,7 @@
     "types": ["node", "react", "react-dom"],
     "baseUrl": ".",
     "paths": {
-      "piff": ["packages/piff/src/index.ts"]
+      "piffjs": ["packages/piff/src/index.ts"]
     }
   },
   "include": ["packages/**/*.ts", "packages/**/*.tsx"]

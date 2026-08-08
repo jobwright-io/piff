@@ -56,10 +56,10 @@ failed, and `130` means cancellation.
 
 ## TypeScript SDK
 
-The core package is `piff`:
+The core package is `piffjs`:
 
 ```ts
-import { piff } from 'piff'
+import { piff } from 'piffjs'
 
 const result = await piff(beforePdf, afterPdf, {
   mode: 'semantic',
@@ -134,11 +134,10 @@ and table blocks, malformed inputs, encrypted inputs, deterministic output, and 
 
 ## Release deployment
 
-The `Release packages` workflow publishes the core NPM package, platform native NPM packages, and
-the Rust crates. It runs for a published GitHub release or an explicit `workflow_dispatch` run with
-`publish` enabled. Repository Actions secrets named `NPM_TOKEN` and `CARGO_REGISTRY_TOKEN` are
-required. The React and browser adapter packages remain private until they have their own release
-contract.
+The `Release packages` workflow publishes `piffjs`, its platform native NPM packages, and the Rust
+crates. It runs for a published GitHub release or an explicit `workflow_dispatch` run with `publish`
+enabled. Repository Actions secrets named `NPM_TOKEN` and `CARGO_REGISTRY_TOKEN` are required. The
+React and browser adapter packages remain private until they have their own release contract.
 
 ## Runtime boundary
 

@@ -21,6 +21,6 @@
     "react-dom": ">=18"
   },
   "dependencies": {
-    "piff": "workspace:*"
+    "piffjs": "workspace:*"
   }
 }
