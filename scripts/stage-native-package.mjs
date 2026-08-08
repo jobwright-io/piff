@@ -54,6 +54,10 @@ await writeFile(
     version: packageVersion,
     description: `Native piffjs runtime for ${target}`,
     license: 'MIT OR Apache-2.0',
+    repository: {
+      type: 'git',
+      url: 'https://github.com/jobwright-io/piff.git',
+    },
     type: 'commonjs',
     main: 'index.js',
     os: platform.os,

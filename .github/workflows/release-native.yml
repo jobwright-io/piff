@@ -117,6 +117,7 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: read
+      id-token: write
 
     steps:
       - name: Check out source
@@ -128,10 +129,11 @@ jobs:
           version: 11.9.0
 
       - name: Install Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
-          node-version: 22
-          cache: pnpm
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
 
       - name: Install JavaScript dependencies
         run: pnpm install --frozen-lockfile
@@ -146,23 +148,14 @@ jobs:
           path: artifacts/native
           merge-multiple: false
 
-      - name: Configure npm authentication
-        run: npm config set //registry.npmjs.org/:_authToken "$NODE_AUTH_TOKEN"
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-
       - name: Publish platform packages
         run: node scripts/publish-native-packages.mjs --root artifacts/native
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Prepare core package metadata
         run: node scripts/prepare-core-package.mjs --source packages/piff --output artifacts/release/core
 
       - name: Publish core package
         run: npm publish artifacts/release/core --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
   publish-cargo:
     name: Publish crates.io packages

@@ -3,6 +3,10 @@
   "version": "0.1.0",
   "private": true,
   "license": "MIT OR Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jobwright-io/piff.git"
+  },
   "type": "module",
   "files": ["dist"],
   "exports": {
