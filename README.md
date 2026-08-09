@@ -147,15 +147,7 @@ GitHub Packages, and the Rust crates. It runs for a published GitHub release or 
 scoped `GITHUB_TOKEN`; only the crates.io registry secret is needed. The
 React and browser adapter packages remain private until they have their own release contract. The
 initial native release targets glibc Linux, macOS, and Windows; musl Linux support remains a separate
-cross-compilation task.
-
-## Runtime boundary
-
-Piff is generic. It does not embed CV-specific concepts, OCR policy, document editing, or an
-accept/reject workflow. Those belong in applications built on the SDK result.
-
-PDFium is the default renderer and remains an internal backend behind the Rust runtime. Native
-distribution must preserve PDFium and third-party license notices. A pure-Rust renderer is not
-required for the current Node, Bun, CLI, and native artifact path.
+cross-compilation task. Native packages include PDFium and third-party license notices under
+`licenses/`.
 
 See [ROADMAP.md](ROADMAP.md) for the remaining renderer, fuzzing, benchmark, and distribution work.

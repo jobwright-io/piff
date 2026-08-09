@@ -53,7 +53,7 @@ await writeFile(
     name: packageName,
     version: packageVersion,
     description: `Native @jobwright-io/piffjs runtime for ${target}`,
-    license: 'MIT OR Apache-2.0',
+    license: 'MIT',
     repository: {
       type: 'git',
       url: 'https://github.com/jobwright-io/piffjs.git',

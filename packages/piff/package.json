@@ -2,7 +2,7 @@
   "name": "@jobwright-io/piffjs",
   "version": "0.1.0",
   "private": true,
-  "license": "MIT OR Apache-2.0",
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/jobwright-io/piffjs.git"
