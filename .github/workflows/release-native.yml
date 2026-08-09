@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       publish:
-        description: Publish the staged native packages and generated core package to npm
+        description: Publish the staged native packages and generated core package to GitHub Packages
         required: true
         default: false
         type: boolean
@@ -111,13 +111,13 @@ jobs:
           retention-days: 14
 
   publish:
-    name: Publish NPM packages
+    name: Publish GitHub Packages
     needs: build
     if: ${{ github.event_name == 'release' || inputs.publish == true }}
     runs-on: ubuntu-24.04
     permissions:
       contents: read
-      id-token: write
+      packages: write
 
     steps:
       - name: Check out source
@@ -132,7 +132,8 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version: 24
-          registry-url: https://registry.npmjs.org
+          registry-url: https://npm.pkg.github.com
+          scope: '@jobwright-io'
           package-manager-cache: false
 
       - name: Install JavaScript dependencies
@@ -149,12 +150,16 @@ jobs:
           merge-multiple: false
 
       - name: Publish platform packages
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: node scripts/publish-native-packages.mjs --root artifacts/native
 
       - name: Prepare core package metadata
         run: node scripts/prepare-core-package.mjs --source packages/piff --output artifacts/release/core
 
       - name: Publish core package
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npm publish artifacts/release/core --access public
 
   publish-cargo:
@@ -181,5 +186,12 @@ jobs:
         run: |
           set -euo pipefail
           for package in piff-core piff-semantic piff-pdfium piff-napi piff-wasm piff; do
-            cargo publish --locked --package "$package"
+            version="$(cargo metadata --locked --no-deps --format-version 1 | jq -r --arg package "$package" '.packages[] | select(.name == $package) | .version')"
+            if curl --fail --silent --show-error \
+              --user-agent "piffjs-release/${GITHUB_SHA} (https://github.com/jobwright-io/piffjs)" \
+              "https://crates.io/api/v1/crates/$package/$version" >/dev/null; then
+              echo "$package@$version is already on crates.io; skipping"
+            else
+              cargo publish --locked --package "$package"
+            fi
           done

@@ -69,6 +69,10 @@ await writeFile(
       'pdfium',
       'licenses',
     ],
+    publishConfig: {
+      access: 'public',
+      registry: 'https://npm.pkg.github.com',
+    },
   }, null, 2)}\n`,
 )
 

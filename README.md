@@ -58,6 +58,13 @@ failed, and `130` means cancellation.
 
 The core package is `@jobwright-io/piffjs`:
 
+Configure the `@jobwright-io` scope to use GitHub Packages, then install it:
+
+```sh
+npm config set @jobwright-io:registry https://npm.pkg.github.com
+npm install @jobwright-io/piffjs
+```
+
 ```ts
 import { piff } from '@jobwright-io/piffjs'
 
@@ -134,10 +141,10 @@ and table blocks, malformed inputs, encrypted inputs, deterministic output, and 
 
 ## Release deployment
 
-The `Release packages` workflow publishes `@jobwright-io/piffjs`, its platform native NPM packages,
-and the Rust crates. It runs for a published GitHub release or an explicit `workflow_dispatch` run
-with `publish` enabled. npm publishing uses GitHub OIDC Trusted Publishing; only the crates.io
-registry secret is needed. The
+The `Release packages` workflow publishes `@jobwright-io/piffjs`, its platform native packages to
+GitHub Packages, and the Rust crates. It runs for a published GitHub release or an explicit
+`workflow_dispatch` run with `publish` enabled. GitHub Packages publishing uses the workflow's
+scoped `GITHUB_TOKEN`; only the crates.io registry secret is needed. The
 React and browser adapter packages remain private until they have their own release contract. The
 initial native release targets glibc Linux, macOS, and Windows; musl Linux support remains a separate
 cross-compilation task.

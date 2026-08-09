@@ -21,7 +21,11 @@ packageJson.private = false
 packageJson.optionalDependencies = Object.fromEntries(
   TARGETS.map((target) => [`@jobwright-io/piffjs-${target}`, packageJson.version]),
 )
-packageJson.publishConfig = { ...(packageJson.publishConfig ?? {}), access: 'public' }
+packageJson.publishConfig = {
+  ...(packageJson.publishConfig ?? {}),
+  access: 'public',
+  registry: 'https://npm.pkg.github.com',
+}
 
 await writeFile(join(output, 'package.json'), `${JSON.stringify(packageJson, null, 2)}\n`)
 console.log(`prepared publishable ${packageJson.name}@${packageJson.version} at ${output}`)
