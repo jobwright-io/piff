@@ -26,6 +26,8 @@ import type {
   PdfTextDiff,
   PdfDocumentTextDiff,
   PdfDocumentReviewItem,
+  PiffCacheDiagnostics,
+  PiffSessionOptions,
 } from './types.js'
 
 export type PiffErrorCode =
@@ -235,31 +237,52 @@ interface NativeResult {
     } | null
   }>
   stats: {
+    load_ms: number
+    fingerprint_ms: number
+    matching_ms: number
     render_ms: number
     compare_ms: number
+    region_ms: number
+    semantic_ms: number
     total_ms: number
   }
 }
+
+type PreviewCacheEntry = {
+  promise: Promise<Uint8Array>
+  bytes?: number
+}
+
+const DEFAULT_MAX_PREVIEW_CACHE_BYTES = 64 * 1024 * 1024
 
 /** A reusable comparison session with lazy page preview rendering. */
 export class PiffSession {
   private closed = false
   private comparison: Promise<PiffResult> | undefined
   private equality: Promise<boolean> | undefined
-  private readonly previews = new Map<string, Promise<Uint8Array>>()
+  private readonly previews = new Map<string, PreviewCacheEntry>()
+  private readonly maxPreviewCacheBytes: number
+  private previewCacheBytes = 0
+  private previewCacheHits = 0
+  private previewCacheMisses = 0
+  private previewCacheEvictions = 0
 
   private constructor(
     private before: Uint8Array,
     private after: Uint8Array,
     private readonly options?: PiffOptions,
-  ) {}
+    sessionOptions?: PiffSessionOptions,
+  ) {
+    this.maxPreviewCacheBytes = normalizeMaxPreviewCacheBytes(sessionOptions?.maxPreviewCacheBytes)
+  }
 
   static async open(
     before: Uint8Array,
     after: Uint8Array,
     options?: PiffOptions,
+    sessionOptions?: PiffSessionOptions,
   ): Promise<PiffSession> {
-    return new PiffSession(before, after, options)
+    return new PiffSession(before, after, options, sessionOptions)
   }
 
   async compare(runOptions?: PiffRunOptions): Promise<PiffResult> {
@@ -347,17 +370,46 @@ export class PiffSession {
     const key = `${pageIndex}:${options?.view ?? 'diff'}`
     const cached = this.previews.get(key)
     if (cached !== undefined) {
-      return cached
+      this.previewCacheHits += 1
+      this.previews.delete(key)
+      this.previews.set(key, cached)
+      return cached.promise
     }
+    this.previewCacheMisses += 1
     let preview: Promise<Uint8Array>
-    preview = render().catch((error: unknown) => {
-      if (this.previews.get(key) === preview) {
+    preview = render().then((bytes) => {
+      const entry = this.previews.get(key)
+      if (entry?.promise !== preview) {
+        return bytes
+      }
+      this.previews.delete(key)
+      if (this.maxPreviewCacheBytes > 0 && bytes.byteLength <= this.maxPreviewCacheBytes) {
+        this.previewCacheBytes += bytes.byteLength
+        this.previews.set(key, { promise: preview, bytes: bytes.byteLength })
+        this.trimPreviewCache()
+      }
+      return bytes
+    }).catch((error: unknown) => {
+      if (this.previews.get(key)?.promise === preview) {
         this.previews.delete(key)
       }
       throw toPiffError(error)
     })
-    this.previews.set(key, preview)
+    this.previews.set(key, { promise: preview })
     return preview
+  }
+
+  /** Returns bounded preview-cache counters without exposing cached image buffers. */
+  cacheDiagnostics(): PiffCacheDiagnostics {
+    this.ensureOpen()
+    return {
+      maxPreviewCacheBytes: this.maxPreviewCacheBytes,
+      previewCacheBytes: this.previewCacheBytes,
+      previewCacheEntries: this.previews.size,
+      previewCacheHits: this.previewCacheHits,
+      previewCacheMisses: this.previewCacheMisses,
+      previewCacheEvictions: this.previewCacheEvictions,
+    }
   }
 
   async close(): Promise<void> {
@@ -365,8 +417,22 @@ export class PiffSession {
     this.comparison = undefined
     this.equality = undefined
     this.previews.clear()
+    this.previewCacheBytes = 0
     this.before = new Uint8Array(0)
     this.after = new Uint8Array(0)
+  }
+
+  private trimPreviewCache(): void {
+    while (this.previewCacheBytes > this.maxPreviewCacheBytes) {
+      const oldest = [...this.previews.entries()].find(([, entry]) => entry.bytes !== undefined)
+      if (oldest === undefined) {
+        return
+      }
+      const [key, entry] = oldest
+      this.previews.delete(key)
+      this.previewCacheBytes -= entry.bytes ?? 0
+      this.previewCacheEvictions += 1
+    }
   }
 
   private ensureOpen(): void {
@@ -445,11 +511,27 @@ function mapResult(raw: NativeResult): PiffResult {
     })),
     textDiff: raw.text_diff == null ? undefined : mapDocumentTextDiff(raw.text_diff),
     stats: {
+      loadMs: raw.stats.load_ms,
+      fingerprintMs: raw.stats.fingerprint_ms,
+      matchingMs: raw.stats.matching_ms,
       renderMs: raw.stats.render_ms,
       compareMs: raw.stats.compare_ms,
+      regionMs: raw.stats.region_ms,
+      semanticMs: raw.stats.semantic_ms,
       totalMs: raw.stats.total_ms,
     },
   }
+}
+
+function normalizeMaxPreviewCacheBytes(value: number | undefined): number {
+  const normalized = value ?? DEFAULT_MAX_PREVIEW_CACHE_BYTES
+  if (!Number.isSafeInteger(normalized) || normalized < 0) {
+    throw new PiffError(
+      'invalid-options',
+      'maxPreviewCacheBytes must be a non-negative safe integer',
+    )
+  }
+  return normalized
 }
 
 function mapDocumentTextDiff(raw: RawDocumentTextDiff): PdfDocumentTextDiff {
@@ -646,9 +728,11 @@ function throwIfAborted(signal: AbortSignal | undefined): void {
 export type {
   PiffBounds,
   PiffOptions,
+  PiffCacheDiagnostics,
   PiffProgress,
   PiffProgressPhase,
   PiffRunOptions,
+  PiffSessionOptions,
   PdfPagePreviewOptions,
   PdfPagePreviewView,
   PiffRegion,

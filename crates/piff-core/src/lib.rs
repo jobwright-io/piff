@@ -81,6 +81,7 @@ pub struct PageDiff {
     pub changed_pixels: u64,
     pub changed_ratio: f32,
     pub alignment: Alignment,
+    pub region_ms: f64,
     pub regions: Vec<DiffRegion>,
     pub preview: RgbaImage,
 }
@@ -463,6 +464,17 @@ where
         changed_pixels as f32 / pixel_count as f32
     };
 
+    let region_started = std::time::Instant::now();
+    let regions = find_regions(
+        &changed,
+        &before_content,
+        &after_content,
+        width,
+        height,
+        options.min_region_area,
+        &is_cancelled,
+    )?;
+
     Ok(PageDiff {
         equal: changed_ratio <= options.changed_pixel_ratio,
         width,
@@ -470,15 +482,8 @@ where
         changed_pixels,
         changed_ratio,
         alignment,
-        regions: find_regions(
-            &changed,
-            &before_content,
-            &after_content,
-            width,
-            height,
-            options.min_region_area,
-            &is_cancelled,
-        )?,
+        region_ms: region_started.elapsed().as_secs_f64() * 1_000.0,
+        regions,
         preview,
     })
 }

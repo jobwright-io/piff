@@ -64,17 +64,28 @@ Acceptance criteria:
 
 ### 3. Reliability and adversarial coverage
 
+The regression harness now covers page structure, figure changes, malformed input, encrypted
+input, resource limits, deterministic output, cancellation boundaries, and bounded-cache eviction.
+It records engine and runtime metadata and checks that phase timings remain finite and
+non-negative. Fuzz targets now exercise semantic normalization and the PDFium loading boundary.
+
 - Golden fixtures for columns, tables, forms, repeated headers, ligatures, missing fonts, scans,
   malformed objects, encrypted files, and figure changes.
-- Fuzz the PDF loading and semantic normalization boundaries.
 - Verify cancellation, memory limits, and deterministic output under hostile inputs.
-- Add renderer/version metadata to benchmark and regression records.
+- Run sustained fuzz campaigns against the checked-in targets and promote minimized failures into
+  the golden corpus.
+- Expand renderer/version metadata once the packaging workflow exposes the exact PDFium artifact
+  version at runtime.
 
 ### 4. Performance and distribution
 
-- Benchmark rendering, extraction, matching, region detection, and encoding separately.
-- Bound cache memory and expose cache diagnostics.
-- Add process-level parallelism guidance for PDFium workloads.
+The SDK now exposes phase timings for loading, fingerprinting, matching, rendering, pixel and
+figure comparison, region detection, semantic extraction, and total runtime. `pnpm benchmark`
+produces repeatable JSON samples for semantic text and visual-region cases, including engine and
+runtime metadata. `PiffSession` preview storage is byte-bounded and exposes hit, miss, entry, byte,
+and eviction counters. The README documents the process-level PDFium concurrency boundary.
+
+- Add preview encoding timing to the benchmark report.
 - Expand reproducible native artifacts only after the compatibility corpus is stable.
 
 ## Deliberate non-goals

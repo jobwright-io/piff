@@ -1,0 +1,29 @@
+[package]
+name = "piff-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[workspace]
+
+[dependencies]
+libfuzzer-sys = "0.4"
+piff-pdfium = { path = "../crates/piff-pdfium" }
+piff-semantic = { path = "../crates/piff-semantic" }
+
+[[bin]]
+name = "semantic_normalization"
+path = "fuzz_targets/semantic_normalization.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "pdf_loading"
+path = "fuzz_targets/pdf_loading.rs"
+test = false
+doc = false
+bench = false

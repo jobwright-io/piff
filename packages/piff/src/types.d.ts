@@ -40,6 +40,17 @@ export interface PiffRunOptions {
     signal?: AbortSignal;
     onProgress?: (event: PiffProgress) => void;
 }
+export interface PiffSessionOptions {
+    maxPreviewCacheBytes?: number;
+}
+export interface PiffCacheDiagnostics {
+    maxPreviewCacheBytes: number;
+    previewCacheBytes: number;
+    previewCacheEntries: number;
+    previewCacheHits: number;
+    previewCacheMisses: number;
+    previewCacheEvictions: number;
+}
 export interface PdfPagePreviewOptions {
     format?: 'png';
     view?: PdfPagePreviewView;
@@ -159,8 +170,13 @@ export interface PdfDocumentTextDiff {
     stream: PdfDocumentReviewItem[];
 }
 export interface PiffStats {
+    loadMs: number;
+    fingerprintMs: number;
+    matchingMs: number;
     renderMs: number;
     compareMs: number;
+    regionMs: number;
+    semanticMs: number;
     totalMs: number;
 }
 export interface PiffResult {

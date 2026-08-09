@@ -355,9 +355,14 @@ pub enum PageWarning {
 
 #[derive(Debug, Clone, Copy, Serialize)]
 pub struct PiffStats {
-    pub render_ms: u128,
-    pub compare_ms: u128,
-    pub total_ms: u128,
+    pub load_ms: f64,
+    pub fingerprint_ms: f64,
+    pub matching_ms: f64,
+    pub render_ms: f64,
+    pub compare_ms: f64,
+    pub region_ms: f64,
+    pub semantic_ms: f64,
+    pub total_ms: f64,
 }
 
 #[derive(Debug, Serialize)]
@@ -502,9 +507,11 @@ pub fn compare_files_with_passwords(
     ensure_file_input_limit(after_path.as_ref(), "after", options.limits.max_input_bytes)?;
     let started = Instant::now();
     with_pdfium(library_path, |pdfium| {
+        let load_started = Instant::now();
         let before = load_pdf_from_file(pdfium, before_path.as_ref(), passwords.before, "before")?;
         let after = load_pdf_from_file(pdfium, after_path.as_ref(), passwords.after, "after")?;
-        compare_documents(&before, &after, options, started, None, None)
+        let load_ms = elapsed_ms(load_started);
+        compare_documents(&before, &after, options, started, load_ms, None, None)
     })
 }
 
@@ -583,8 +590,10 @@ pub fn compare_bytes_with_passwords_and_progress(
     };
     let started = Instant::now();
     with_pdfium(library_path, |pdfium| {
+        let load_started = Instant::now();
         let before = load_pdf_from_bytes(pdfium, before_bytes, passwords.before, "before")?;
         let after = load_pdf_from_bytes(pdfium, after_bytes, passwords.after, "after")?;
+        let load_ms = elapsed_ms(load_started);
         report_progress(
             progress,
             ProgressEvent {
@@ -593,7 +602,15 @@ pub fn compare_bytes_with_passwords_and_progress(
                 total: 1,
             },
         );
-        compare_documents(&before, &after, options, started, progress, cancellation)
+        compare_documents(
+            &before,
+            &after,
+            options,
+            started,
+            load_ms,
+            progress,
+            cancellation,
+        )
     })
 }
 
@@ -681,7 +698,8 @@ pub fn is_equal_bytes_with_passwords_and_progress(
                 total: 1,
             },
         );
-        let (page_pairs, _) = build_page_pairs(&before, &after, options, progress, cancellation)?;
+        let (page_pairs, _, _) =
+            build_page_pairs(&before, &after, options, progress, cancellation)?;
         let mut role_evidence = DocumentRoleEvidence::default();
 
         for (page_index, page_pair) in page_pairs.iter().copied().enumerate() {
@@ -842,7 +860,7 @@ pub fn render_page_diff_png_with_passwords_and_cancellation(
     with_pdfium(library_path, |pdfium| {
         let before = load_pdf_from_bytes(pdfium, before_bytes, request.passwords.before, "before")?;
         let after = load_pdf_from_bytes(pdfium, after_bytes, request.passwords.after, "after")?;
-        let (page_pairs, _) =
+        let (page_pairs, _, _) =
             build_page_pairs(&before, &after, options, None, request.cancellation)?;
         if page_index >= page_pairs.len() {
             return Err(PiffError::PageIndexOutOfBounds {
@@ -1291,19 +1309,22 @@ fn compare_documents(
     after: &PdfDocument<'_>,
     options: PiffOptions,
     started: Instant,
+    load_ms: f64,
     progress: Option<&dyn Fn(ProgressEvent)>,
     cancellation: Option<&CancellationToken>,
 ) -> Result<PiffResult, PiffError> {
     ensure_not_cancelled(cancellation)?;
     let before_page_count = before.pages().len().max(0) as usize;
     let after_page_count = after.pages().len().max(0) as usize;
-    let (page_pairs, fingerprint_render_ms) =
+    let (page_pairs, fingerprint_ms, matching_ms) =
         build_page_pairs(before, after, options, progress, cancellation)?;
     let page_count = page_pairs.len();
     let mut pages = Vec::with_capacity(page_count);
     let mut role_evidence = DocumentRoleEvidence::default();
-    let mut render_ms = fingerprint_render_ms;
-    let mut compare_ms = 0_u128;
+    let mut render_ms = 0.0;
+    let mut compare_ms = 0.0;
+    let mut region_ms = 0.0;
+    let mut semantic_ms = 0.0;
 
     for (page_index, page_pair) in page_pairs.iter().copied().enumerate() {
         ensure_not_cancelled(cancellation)?;
@@ -1340,7 +1361,7 @@ fn compare_documents(
                 )
             })
             .transpose()?;
-        render_ms += render_started.elapsed().as_millis();
+        render_ms += elapsed_ms(render_started);
         report_progress(
             progress,
             ProgressEvent {
@@ -1390,6 +1411,11 @@ fn compare_documents(
         } else {
             Vec::new()
         };
+        let compare_elapsed_ms = elapsed_ms(compare_started);
+        region_ms += page_diff.region_ms;
+        compare_ms += (compare_elapsed_ms - page_diff.region_ms).max(0.0);
+
+        let semantic_started = Instant::now();
         let semantic = if matches!(options.mode, PiffMode::Semantic) {
             Some(compare_semantic_pages(
                 before,
@@ -1403,7 +1429,7 @@ fn compare_documents(
         } else {
             None
         };
-        compare_ms += compare_started.elapsed().as_millis();
+        semantic_ms += elapsed_ms(semantic_started);
         let semantic_equal = semantic.as_ref().map(|diff| diff.equal).unwrap_or(true);
         let geometry_equal = before_size == after_size;
         let warnings = page_warnings(
@@ -1478,9 +1504,14 @@ fn compare_documents(
         pages,
         text_diff,
         stats: PiffStats {
+            load_ms,
+            fingerprint_ms,
+            matching_ms,
             render_ms,
             compare_ms,
-            total_ms: started.elapsed().as_millis(),
+            region_ms,
+            semantic_ms,
+            total_ms: elapsed_ms(started),
         },
     })
 }
@@ -1797,7 +1828,7 @@ fn build_page_pairs(
     options: PiffOptions,
     progress: Option<&dyn Fn(ProgressEvent)>,
     cancellation: Option<&CancellationToken>,
-) -> Result<(Vec<PagePair>, u128), PiffError> {
+) -> Result<(Vec<PagePair>, f64, f64), PiffError> {
     ensure_not_cancelled(cancellation)?;
     let before_page_count = before.pages().len().max(0) as usize;
     let after_page_count = after.pages().len().max(0) as usize;
@@ -1813,7 +1844,8 @@ fn build_page_pairs(
                     moved: false,
                 })
                 .collect(),
-            0,
+            0.0,
+            0.0,
         ));
     }
 
@@ -1832,8 +1864,10 @@ fn build_page_pairs(
         cancellation,
         options.limits.max_page_pixels,
     )?;
+    let fingerprint_ms = elapsed_ms(fingerprint_started);
+    let matching_started = Instant::now();
     let pairs = pair_page_fingerprints(&before_fingerprints, &after_fingerprints);
-    Ok((pairs, fingerprint_started.elapsed().as_millis()))
+    Ok((pairs, fingerprint_ms, elapsed_ms(matching_started)))
 }
 
 fn render_fingerprints(
@@ -1872,6 +1906,10 @@ fn report_progress(progress: Option<&dyn Fn(ProgressEvent)>, event: ProgressEven
     if let Some(progress) = progress {
         progress(event);
     }
+}
+
+fn elapsed_ms(started: Instant) -> f64 {
+    started.elapsed().as_secs_f64() * 1_000.0
 }
 
 fn is_cancelled(cancellation: Option<&CancellationToken>) -> bool {

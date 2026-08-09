@@ -536,7 +536,16 @@ interface WasmResult {
       text_diff?: RawTextDiff | null
     } | null
   }>
-  stats: { render_ms: number; compare_ms: number; total_ms: number }
+  stats: {
+    load_ms: number
+    fingerprint_ms: number
+    matching_ms: number
+    render_ms: number
+    compare_ms: number
+    region_ms: number
+    semantic_ms: number
+    total_ms: number
+  }
 }
 
 function mapResult(raw: WasmResult): PiffResult {
@@ -614,8 +623,13 @@ function mapResult(raw: WasmResult): PiffResult {
     })),
     textDiff: raw.text_diff == null ? undefined : mapDocumentTextDiff(raw.text_diff),
     stats: {
+      loadMs: raw.stats.load_ms,
+      fingerprintMs: raw.stats.fingerprint_ms,
+      matchingMs: raw.stats.matching_ms,
       renderMs: raw.stats.render_ms,
       compareMs: raw.stats.compare_ms,
+      regionMs: raw.stats.region_ms,
+      semanticMs: raw.stats.semantic_ms,
       totalMs: raw.stats.total_ms,
     },
   }

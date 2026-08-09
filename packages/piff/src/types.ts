@@ -58,6 +58,22 @@ export interface PiffRunOptions {
   onProgress?: (event: PiffProgress) => void
 }
 
+/** Controls memory retained by a PiffSession's lazy preview cache. */
+export interface PiffSessionOptions {
+  /** Maximum encoded preview bytes retained. Defaults to 64 MiB. Set to 0 to disable caching. */
+  maxPreviewCacheBytes?: number
+}
+
+/** Runtime counters for the bounded lazy preview cache. */
+export interface PiffCacheDiagnostics {
+  maxPreviewCacheBytes: number
+  previewCacheBytes: number
+  previewCacheEntries: number
+  previewCacheHits: number
+  previewCacheMisses: number
+  previewCacheEvictions: number
+}
+
 export interface PdfPagePreviewOptions {
   format?: 'png'
   view?: PdfPagePreviewView
@@ -268,8 +284,13 @@ export interface PdfDocumentTextDiff {
 }
 
 export interface PiffStats {
+  loadMs: number
+  fingerprintMs: number
+  matchingMs: number
   renderMs: number
   compareMs: number
+  regionMs: number
+  semanticMs: number
   totalMs: number
 }
 

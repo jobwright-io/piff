@@ -242,6 +242,7 @@ for (const fixture of cases) {
 }
 
 const report = []
+let reportEngine
 await import('./figure-scenarios.mjs')
 const figureScenarioDirectory = join(projectRoot, 'artifacts/figure-scenarios')
 const figureCases = [
@@ -306,7 +307,22 @@ for (const fixture of cases) {
     renderer: 'pdfium',
     binding: 'pdfium-render',
   })
+  reportEngine ??= result.engine
   fixture.verify(result)
+  for (const key of [
+    'loadMs',
+    'fingerprintMs',
+    'matchingMs',
+    'renderMs',
+    'compareMs',
+    'regionMs',
+    'semanticMs',
+    'totalMs',
+  ]) {
+    assert.equal(typeof result.stats[key], 'number')
+    assert.ok(Number.isFinite(result.stats[key]))
+    assert.ok(result.stats[key] >= 0)
+  }
   if (fixture.verifyFastEqual !== undefined) {
     const equalitySession = await PiffSession.open(fixture.before, fixture.after, semanticOptions)
     try {
@@ -322,6 +338,13 @@ for (const fixture of cases) {
     assert.equal(preview[1], 0x50)
     assert.equal(preview[2], 0x4e)
     assert.equal(preview[3], 0x47)
+    const cachedPreview = await session.renderPageDiff(0, { view: 'diff' })
+    assert.deepEqual(cachedPreview, preview)
+    const cacheDiagnostics = session.cacheDiagnostics()
+    assert.equal(cacheDiagnostics.previewCacheHits, 1)
+    assert.equal(cacheDiagnostics.previewCacheMisses, 1)
+    assert.equal(cacheDiagnostics.previewCacheEntries, 1)
+    assert.equal(cacheDiagnostics.previewCacheBytes, preview.byteLength)
     report.push({
       name: fixture.name,
       equal: result.equal,
@@ -494,6 +517,53 @@ await assert.rejects(
 )
 report.push({ name: 'malformed-and-resource-limits', passed: true })
 
+const boundedCacheSession = await PiffSession.open(
+  stablePdf,
+  stablePdf,
+  semanticOptions,
+  { maxPreviewCacheBytes: 1 },
+)
+try {
+  await boundedCacheSession.renderPageDiff(0, { view: 'diff' })
+  const boundedCache = boundedCacheSession.cacheDiagnostics()
+  assert.equal(boundedCache.maxPreviewCacheBytes, 1)
+  assert.equal(boundedCache.previewCacheBytes, 0)
+  assert.equal(boundedCache.previewCacheEntries, 0)
+} finally {
+  await boundedCacheSession.close()
+}
+
+const cacheProbeSession = await PiffSession.open(stablePdf, stablePdf, semanticOptions)
+let diffPreviewBytes
+let beforePreviewBytes
+try {
+  diffPreviewBytes = await cacheProbeSession.renderPageDiff(0, { view: 'diff' })
+  beforePreviewBytes = await cacheProbeSession.renderPageDiff(0, { view: 'before' })
+} finally {
+  await cacheProbeSession.close()
+}
+const evictionSession = await PiffSession.open(
+  stablePdf,
+  stablePdf,
+  semanticOptions,
+  { maxPreviewCacheBytes: Math.max(diffPreviewBytes.byteLength, beforePreviewBytes.byteLength) },
+)
+try {
+  await evictionSession.renderPageDiff(0, { view: 'diff' })
+  await evictionSession.renderPageDiff(0, { view: 'before' })
+  const evictedCache = evictionSession.cacheDiagnostics()
+  assert.ok(evictedCache.previewCacheEvictions >= 1)
+  assert.ok(evictedCache.previewCacheBytes <= evictedCache.maxPreviewCacheBytes)
+  assert.ok(evictedCache.previewCacheEntries <= 1)
+} finally {
+  await evictionSession.close()
+}
+await assert.rejects(
+  () => PiffSession.open(stablePdf, stablePdf, semanticOptions, { maxPreviewCacheBytes: -1 }),
+  (error) => error instanceof PiffError && error.code === 'invalid-options',
+)
+report.push({ name: 'bounded-preview-cache-diagnostics-and-eviction', passed: true })
+
 const referenceBeforePath = join(projectRoot, 'references/pdfium-render/test/text-test.pdf')
 const referenceAfterPath = join(projectRoot, 'references/pdfium-render/test/export-test.pdf')
 if (await fileExists(referenceBeforePath) && await fileExists(referenceAfterPath)) {
@@ -543,7 +613,17 @@ if (await fileExists(encryptedPath)) {
 await mkdir(join(projectRoot, 'artifacts'), { recursive: true })
 await writeFile(
   join(projectRoot, 'artifacts/regression-report.json'),
-  `${JSON.stringify({ generatedAt: new Date().toISOString(), cases: report }, null, 2)}\n`,
+  `${JSON.stringify({
+    schemaVersion: 1,
+    generatedAt: new Date().toISOString(),
+    runtime: {
+      node: process.version,
+      platform: process.platform,
+      arch: process.arch,
+    },
+    engine: reportEngine,
+    cases: report,
+  }, null, 2)}\n`,
 )
 console.log(`regression verification passed: ${report.filter((entry) => !entry.skipped).length} cases`)
 if (report.some((entry) => entry.skipped)) {

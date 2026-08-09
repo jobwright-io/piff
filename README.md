@@ -106,6 +106,28 @@ try {
 }
 ```
 
+`result.stats` reports fractional millisecond timings for loading, page fingerprinting, page
+matching, raster rendering, pixel and figure comparison, region detection, semantic extraction,
+and the complete comparison. Run the local benchmark with `pnpm benchmark -- --json`.
+
+Preview bytes stay in a bounded least-recently-used cache. Set the limit to suit the host and read
+its counters without exposing the cached image buffers:
+
+```ts
+const session = await PiffSession.open(
+  beforePdf,
+  afterPdf,
+  { mode: 'semantic' },
+  { maxPreviewCacheBytes: 32 * 1024 * 1024 },
+)
+const preview = await session.renderPageDiff(0)
+console.log(session.cacheDiagnostics())
+```
+
+The current PDFium binding serializes PDFium work inside a process. Reuse a session for related
+requests, but use independent worker processes when throughput requires parallel document
+comparisons. Each worker should have its own memory budget and PDFium library instance.
+
 ## Workspace
 
 - `crates/piff-core/` contains raster comparison, alignment, regions, and page fingerprints.
@@ -133,11 +155,15 @@ pnpm typecheck
 pnpm build
 pnpm verify:regressions
 pnpm verify:cli
+pnpm verify:fuzz
+pnpm benchmark -- --json
 ```
 
 The regression suite uses ordinary PDF bytes and covers wording changes, additions and removals,
 page insertion, deletion and movement, translation, figures, repeated headers and footers, list
 and table blocks, malformed inputs, encrypted inputs, deterministic output, and resource limits.
+The fuzz targets under `fuzz/` cover semantic normalization and the PDFium loading boundary; the
+PDF loading target requires `PDFIUM_LIBRARY_PATH` and should run in an isolated process.
 
 ## Release deployment
 

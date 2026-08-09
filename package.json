@@ -12,6 +12,8 @@
     "build:wasm-runtime": "node scripts/build-wasm.mjs",
     "verify:cli": "cargo build --locked -p piff && node scripts/verify-cli.mjs",
     "verify:regressions": "node scripts/verify-regressions.mjs",
+    "verify:fuzz": "cargo check --manifest-path fuzz/Cargo.toml --locked",
+    "benchmark": "node scripts/benchmark.mjs",
     "stage:native": "node scripts/stage-native-package.mjs",
     "download:pdfium": "node scripts/download-pdfium.mjs",
     "copy:native": "node scripts/copy-native-module.mjs",
