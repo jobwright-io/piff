@@ -35,7 +35,7 @@ Local CLI runs need a PDFium library. Download or provide one, then pass its pat
 
 ## CLI
 
-The binary has four commands:
+The binary has five commands:
 
 ```sh
 piff compare before.pdf after.pdf --mode semantic --output report.json
@@ -43,6 +43,8 @@ piff diff before.pdf after.pdf
 piff diff before.pdf after.pdf --format inline
 piff diff before.pdf after.pdf --format json --context-lines 2 --compact
 piff equal before.pdf after.pdf
+piff series baseline.pdf candidate-a.pdf candidate-b.pdf --format inline
+piff series baseline.pdf candidate-a.pdf candidate-b.pdf --format json --compact
 piff doctor --pdfium /path/to/libpdfium.so
 ```
 
@@ -51,7 +53,10 @@ comparison, so it skips full-page rasterization; use `--render full` when the te
 pixel evidence. `--format inline` prints a unified document stream with `[before]`, `[after]`, or
 `[both]` ownership. `--format json` returns the same block-scoped stream as the machine-readable
 `text_diff` object. `equal` stops at the first difference and is suitable for CI. `doctor` verifies
-the configured PDFium backend.
+the configured PDFium backend. `series` compares an ordered set of revisions. It uses the first
+PDF as the baseline by default; pass `--strategy adjacent` to compare each revision to its
+predecessor. Its inline output labels every line with a revision ID instead of inventing a global
+before/after side.
 
 All commands support page matching, DPI, alignment, reading order, passwords, and bounded resource
 flags. Encrypted files can use `--password`, `--before-password`, or `--after-password`. Errors
@@ -84,6 +89,36 @@ for (const operation of result.textDiff?.stream ?? []) {
   console.log(operation.kind, operation.side, operation.beforeText, operation.afterText)
 }
 ```
+
+For candidate generation, use the revision-neutral document-set primitive:
+
+```ts
+import { piffSet } from '@jobwright-io/piffjs'
+
+const result = await piffSet([
+  { id: 'baseline', label: 'Baseline CV', bytes: baselinePdf },
+  { id: 'candidate-a', label: 'Candidate A', bytes: candidateA },
+  { id: 'candidate-b', label: 'Candidate B', bytes: candidateB },
+], {
+  strategy: 'baseline',
+  mode: 'semantic',
+  render: 'none',
+})
+
+for (const change of result.changes) {
+  console.log(change.kind, change.anchors.map((anchor) => anchor.revisionId))
+  for (const variant of change.variants) {
+    console.log(variant.revisionIds, variant.text)
+  }
+}
+```
+
+`PdfChangeOperation` is the multi-document primitive. It has revision-keyed `anchors`, grouped
+content `variants`, and optional pair-specific hunks in `comparisons`. A baseline block changed
+differently by two candidates is one operation with three revision anchors and three content
+variants; a candidate-only block has one `introduced` anchor. Figure, page, and visual-only changes
+use the same shape. `PiffDocumentSet` retains pair sessions so a page preview can be requested
+lazily with `renderPageDiff(fromRevisionId, toRevisionId, pageIndex)`.
 
 The result is compact and serializable. `semantic.blocks` and `textDiff.pages[].blocks` are the
 canonical page-aware review units. `textDiff.stream` is the flattened document-order projection

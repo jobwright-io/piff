@@ -8,7 +8,7 @@ const projectRoot = resolve(fileURLToPath(new URL('..', import.meta.url)))
 process.env.PIFF_NATIVE_MODULE ??= join(projectRoot, 'artifacts/piff.linux-x64-gnu.node')
 process.env.PDFIUM_LIBRARY_PATH ??= join(projectRoot, 'artifacts/pdfium/linux-x64/lib/libpdfium.so')
 
-const { PiffError, PiffSession, piff } = await import('../packages/piff/dist/index.js')
+const { PiffDocumentSet, PiffError, PiffSession, piff, piffSet } = await import('../packages/piff/dist/index.js')
 const { createTextPdf } = await import('./pdf-fixtures.mjs')
 
 const semanticOptions = {
@@ -304,7 +304,7 @@ for (const fixture of cases) {
   assert.equal(result.schemaVersion, 1)
   assert.deepEqual(result.engine, {
     name: 'piff',
-    version: '0.1.1',
+    version: '0.2.0',
     renderer: 'pdfium',
     binding: 'pdfium-render',
     pdfiumApi: '7881',
@@ -643,6 +643,77 @@ if (await fileExists(encryptedPath)) {
 } else {
   report.push({ name: 'encrypted-pdf-password-boundary', skipped: true })
 }
+
+const baselineDocument = createTextPdf([
+  ['Candidate profile.', 'The platform engineer owns reliable systems.'],
+])
+const candidateADocument = createTextPdf([
+  ['Candidate profile.', 'The platform engineer designs reliable systems.'],
+])
+const candidateBDocument = createTextPdf([
+  ['Candidate profile.', 'The platform engineer builds resilient systems.'],
+  ['Additional evidence.', 'Reduced deployment time by 30 percent.'],
+])
+const documentSetResult = await piffSet([
+  { id: 'baseline', label: 'Baseline CV', bytes: baselineDocument },
+  { id: 'candidate-a', label: 'Candidate A', bytes: candidateADocument },
+  { id: 'candidate-b', label: 'Candidate B', bytes: candidateBDocument },
+], {
+  mode: 'semantic',
+  render: 'none',
+  strategy: 'baseline',
+})
+assert.equal(documentSetResult.primitive, 'document-set')
+assert.equal(documentSetResult.strategy, 'baseline')
+assert.deepEqual(documentSetResult.comparisons.map((comparison) => [
+  comparison.fromRevisionId,
+  comparison.toRevisionId,
+]), [
+  ['baseline', 'candidate-a'],
+  ['baseline', 'candidate-b'],
+])
+const mergedTextChange = documentSetResult.changes.find((change) => (
+  change.source === 'text'
+  && change.anchors.some((anchor) => anchor.revisionId === 'baseline')
+  && change.anchors.some((anchor) => anchor.revisionId === 'candidate-a')
+  && change.anchors.some((anchor) => anchor.revisionId === 'candidate-b')
+))
+assert.ok(mergedTextChange)
+assert.equal(mergedTextChange.kind, 'modified')
+assert.equal(mergedTextChange.variants.length, 3)
+assert.ok(documentSetResult.changes.some((change) => (
+  change.source === 'text'
+  && change.anchors.length === 1
+  && change.anchors[0]?.revisionId === 'candidate-b'
+  && change.anchors[0]?.state === 'introduced'
+)))
+assert.equal(documentSetResult.revisions[0].pageCount, 1)
+assert.equal(documentSetResult.revisions[2].pageCount, 2)
+const adjacentSet = await PiffDocumentSet.open([
+  { id: 'baseline', bytes: baselineDocument },
+  { id: 'candidate-a', bytes: candidateADocument },
+  { id: 'candidate-b', bytes: candidateBDocument },
+], { mode: 'semantic', render: 'none', strategy: 'adjacent' })
+try {
+  const adjacentResult = await adjacentSet.compare()
+  assert.deepEqual(adjacentResult.comparisons.map((comparison) => [
+    comparison.fromRevisionId,
+    comparison.toRevisionId,
+  ]), [
+    ['baseline', 'candidate-a'],
+    ['candidate-a', 'candidate-b'],
+  ])
+  const setPreview = await adjacentSet.renderPageDiff('baseline', 'candidate-a', 0)
+  assert.ok(setPreview.byteLength > 8)
+} finally {
+  await adjacentSet.close()
+}
+report.push({
+  name: 'multi-document-revision-neutral-change-set',
+  passed: true,
+  comparisons: documentSetResult.comparisons.length,
+  changes: documentSetResult.changes.length,
+})
 
 await mkdir(join(projectRoot, 'artifacts'), { recursive: true })
 await writeFile(

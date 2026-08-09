@@ -18,9 +18,11 @@ const temporaryDirectory = await mkdtemp(join(tmpdir(), 'piff-cli-'))
 try {
   const beforePath = join(temporaryDirectory, 'before.pdf')
   const afterPath = join(temporaryDirectory, 'after.pdf')
+  const candidatePath = join(temporaryDirectory, 'candidate.pdf')
   const reportPath = join(temporaryDirectory, 'report.json')
   await writeFile(beforePath, createTextPdf([['CLI contract.', 'The release is ready for review.']]))
   await writeFile(afterPath, createTextPdf([['CLI contract.', 'The release is ready for release.']]))
+  await writeFile(candidatePath, createTextPdf([['CLI contract.', 'The release is ready for production.']]))
 
   const doctor = await run(['doctor', '--compact'])
   assert.equal(doctor.status, 0)
@@ -29,7 +31,7 @@ try {
     ok: true,
     engine: {
       name: 'piff',
-      version: '0.1.1',
+      version: '0.2.0',
       renderer: 'pdfium',
       binding: 'pdfium-render',
       pdfium_api: '7881',
@@ -80,6 +82,44 @@ try {
   assert.match(inlineDiff.stdout, /\[both\] \+/)
   assert.match(inlineDiff.stdout, /\[-review-\]/)
   assert.match(inlineDiff.stdout, /\{\+release\+\}/)
+
+  const seriesDiff = await run([
+    'series',
+    beforePath,
+    afterPath,
+    candidatePath,
+    '--format',
+    'inline',
+  ])
+  assert.equal(seriesDiff.status, 1)
+  assert.match(seriesDiff.stdout, /=== \[before\]/)
+  assert.match(seriesDiff.stdout, /=== \[after\]/)
+  assert.match(seriesDiff.stdout, /=== \[candidate\]/)
+  assert.match(seriesDiff.stdout, /\[before\] -/)
+  assert.match(seriesDiff.stdout, /\[after\] \+/)
+  assert.match(seriesDiff.stdout, /\[candidate\] \+/)
+
+  const seriesJson = await run([
+    'series',
+    beforePath,
+    afterPath,
+    candidatePath,
+    '--format',
+    'json',
+    '--compact',
+  ])
+  assert.equal(seriesJson.status, 1)
+  const seriesResult = JSON.parse(seriesJson.stdout)
+  assert.equal(seriesResult.primitive, 'document-set')
+  assert.equal(seriesResult.strategy, 'baseline')
+  assert.deepEqual(seriesResult.comparisons.map((comparison) => [
+    comparison.from_revision_id,
+    comparison.to_revision_id,
+  ]), [
+    ['before', 'after'],
+    ['before', 'candidate'],
+  ])
+  assert.ok(seriesResult.changes.some((change) => change.anchors.length === 3))
 
   const machineDiff = await run([
     'diff',

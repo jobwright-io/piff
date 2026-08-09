@@ -214,3 +214,105 @@ export interface PiffResult {
     textDiff?: PdfDocumentTextDiff;
     stats: PiffStats;
 }
+/** Input document for a multi-document comparison. */
+export interface PiffDocumentInput {
+    id: string;
+    label?: string;
+    bytes: Uint8Array;
+}
+export interface PiffDocumentSetOptions extends PiffOptions {
+    strategy?: PdfDocumentSetStrategy;
+}
+export type PdfDocumentSetStrategy = 'baseline' | 'adjacent';
+export interface PiffDocumentSetProgress extends PiffProgress {
+    comparisonIndex: number;
+    comparisonTotal: number;
+    fromRevisionId: string;
+    toRevisionId: string;
+}
+export interface PiffDocumentSetRunOptions {
+    signal?: AbortSignal;
+    onProgress?: (event: PiffDocumentSetProgress) => void;
+}
+export type PdfChangeSource = 'text' | 'figure' | 'page' | 'visual';
+export type PdfRevisionChangeState = 'introduced' | 'removed' | 'modified' | 'moved' | 'reflowed' | 'swapped';
+export type PdfDocumentChangeKind = PdfSemanticChangeKind | 'visual' | 'swapped' | 'diverged';
+export interface PdfRevisionAnchor {
+    id: string;
+    revisionId: string;
+    source: PdfChangeSource;
+    state: PdfRevisionChangeState;
+    pageIndex?: number;
+    pageStatus?: PdfPageStatus;
+    blockId?: string;
+    figureId?: string;
+    structure?: PdfSemanticTextBlockKind;
+    confidence?: number;
+    text?: string;
+    bounds?: PdfSemanticBounds;
+    focusBounds?: PdfSemanticBounds;
+}
+export interface PdfRevisionVariant {
+    id: string;
+    text?: string;
+    revisionIds: string[];
+    anchorIds: string[];
+}
+export interface PdfRevisionComparisonDetail {
+    fromRevisionId: string;
+    toRevisionId: string;
+    kind: PdfDocumentChangeKind;
+    textDiff?: PdfTextDiff;
+}
+export interface PdfVisualChangeEvidence {
+    changedPixels: number;
+    changedRatio: number;
+    regions: PiffRegion[];
+}
+export interface PdfChangeOperation {
+    id: string;
+    source: PdfChangeSource;
+    kind: PdfDocumentChangeKind;
+    pageIndex?: number;
+    structure?: PdfSemanticTextBlockKind;
+    anchors: PdfRevisionAnchor[];
+    variants: PdfRevisionVariant[];
+    comparisons: PdfRevisionComparisonDetail[];
+    visual?: PdfVisualChangeEvidence;
+}
+export interface PdfDocumentRevision {
+    id: string;
+    label: string;
+    index: number;
+    pageCount?: number;
+}
+export interface PdfDocumentSetComparison {
+    fromRevisionId: string;
+    toRevisionId: string;
+    equal: boolean;
+    changedPages: number;
+    changedLines: number;
+    truncated: boolean;
+}
+export interface PiffDocumentSetStats {
+    loadMs: number;
+    fingerprintMs: number;
+    matchingMs: number;
+    renderMs: number;
+    compareMs: number;
+    regionMs: number;
+    semanticMs: number;
+    totalMs: number;
+}
+export interface PiffDocumentSetResult {
+    schemaVersion: number;
+    primitive: 'document-set';
+    engine: PdfEngineInfo;
+    equal: boolean;
+    strategy: PdfDocumentSetStrategy;
+    revisions: PdfDocumentRevision[];
+    comparisons: PdfDocumentSetComparison[];
+    changes: PdfChangeOperation[];
+    truncated: boolean;
+    stats: PiffDocumentSetStats;
+}

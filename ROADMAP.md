@@ -101,6 +101,25 @@ and eviction counters. The README documents the process-level PDFium concurrency
 - Native package staging writes a deterministic artifact manifest with file sizes and SHA-256
   checksums. Release CI verifies the manifest and pinned PDFium build before publication.
 
+### 5. Multi-document change sets — initial implementation
+
+The next public primitive is `PiffDocumentSet` / `PdfChangeOperation`. It compares an ordered
+revision set with either a shared baseline or adjacent-revision edges, then emits revision-keyed
+anchors, grouped content variants, and optional pair-specific word hunks. The primary result never
+pretends that one revision is globally “old” and another is globally “new”.
+
+- The TypeScript SDK exposes `PiffDocumentSet.open()`, `piffSet()`, progress events per comparison,
+  and lazy previews addressed by `fromRevisionId` and `toRevisionId`.
+- The CLI exposes `piff series ... --format inline|json`, with baseline and adjacent strategies.
+- Text, figure, inserted/deleted page, and visual-only changes use the same operation shape.
+- Baseline changes shared by multiple candidates are grouped into one operation with one variant per
+  distinct revision value; candidate-only additions remain anchored only to their candidate.
+
+The current implementation evaluates the comparison graph through pair sessions. A later
+optimization can share document loading, fingerprints, and semantic extraction across edges
+without changing this result model. An all-pairs strategy and cross-candidate page alignment are
+also deliberately deferred until real workloads require them.
+
 ## Deliberate non-goals
 
 Piff will not embed CV-specific concepts, OCR policy, document editing, accept/reject workflows,

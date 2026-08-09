@@ -287,6 +287,8 @@ pub enum PiffError {
     InvalidPreviewView,
     #[error("could not extract positioned text: {0}")]
     TextExtraction(String),
+    #[error("invalid document set: {0}")]
+    InvalidDocumentSet(String),
     #[error(transparent)]
     Diff(#[from] DiffError),
 }
@@ -316,6 +318,7 @@ impl PiffError {
             Self::PreviewEncoding(_) => "preview-encoding",
             Self::InvalidPreviewView => "invalid-preview-view",
             Self::TextExtraction(_) => "text-extraction",
+            Self::InvalidDocumentSet(_) => "invalid-options",
             Self::Diff(_) => "comparison",
         }
     }
@@ -496,6 +499,154 @@ pub enum ReviewSide {
     Before,
     After,
     Both,
+}
+
+/// Graph used to compare an ordered set of PDF revisions.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum PdfDocumentSetStrategy {
+    Baseline,
+    Adjacent,
+}
+
+#[derive(Debug)]
+pub struct PdfDocumentSetInput {
+    pub id: String,
+    pub label: String,
+    pub bytes: Vec<u8>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PdfDocumentRevision {
+    pub id: String,
+    pub label: String,
+    pub index: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub page_count: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PdfDocumentSetComparison {
+    pub from_revision_id: String,
+    pub to_revision_id: String,
+    pub equal: bool,
+    pub changed_pages: usize,
+    pub changed_lines: usize,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum PdfChangeSource {
+    Text,
+    Figure,
+    Page,
+    Visual,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum PdfRevisionChangeState {
+    Introduced,
+    Removed,
+    Modified,
+    Moved,
+    Reflowed,
+    Swapped,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum PdfDocumentChangeKind {
+    Added,
+    Removed,
+    Modified,
+    Moved,
+    Reflowed,
+    Visual,
+    Swapped,
+    Diverged,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PdfRevisionAnchor {
+    pub id: String,
+    pub revision_id: String,
+    pub source: PdfChangeSource,
+    pub state: PdfRevisionChangeState,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub page_index: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub page_status: Option<PageStatus>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub block_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub figure_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub structure: Option<SemanticTextBlockKind>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub confidence: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bounds: Option<SemanticBounds>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub focus_bounds: Option<SemanticBounds>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PdfRevisionVariant {
+    pub id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    pub revision_ids: Vec<String>,
+    pub anchor_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PdfRevisionComparisonDetail {
+    pub from_revision_id: String,
+    pub to_revision_id: String,
+    pub kind: PdfDocumentChangeKind,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text_diff: Option<TextDiff>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PdfVisualChangeEvidence {
+    pub changed_pixels: u64,
+    pub changed_ratio: f32,
+    pub regions: Vec<DiffRegion>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PdfChangeOperation {
+    pub id: String,
+    pub source: PdfChangeSource,
+    pub kind: PdfDocumentChangeKind,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub page_index: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub structure: Option<SemanticTextBlockKind>,
+    pub anchors: Vec<PdfRevisionAnchor>,
+    pub variants: Vec<PdfRevisionVariant>,
+    pub comparisons: Vec<PdfRevisionComparisonDetail>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub visual: Option<PdfVisualChangeEvidence>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PdfDocumentSetResult {
+    pub schema_version: u32,
+    pub primitive: &'static str,
+    pub engine: PdfEngineInfo,
+    pub equal: bool,
+    pub strategy: PdfDocumentSetStrategy,
+    pub revisions: Vec<PdfDocumentRevision>,
+    pub comparisons: Vec<PdfDocumentSetComparison>,
+    pub changes: Vec<PdfChangeOperation>,
+    pub truncated: bool,
+    pub stats: PiffStats,
 }
 
 /// Verifies that the configured Pdfium backend can be loaded.
@@ -728,6 +879,153 @@ pub fn compare_bytes_with_passwords_and_progress(
         )?;
         add_retry_stats(&mut result, first_stats);
         Ok(result)
+    })
+}
+
+/// Compares an ordered set of PDFs and returns revision-neutral change operations.
+///
+/// The baseline strategy compares revision zero with every later revision. The adjacent
+/// strategy compares each revision with its predecessor. Pair sessions are intentionally kept
+/// as the internal implementation boundary for now; the result shape is independent of that
+/// graph so a shared-document cache can be introduced without changing consumers.
+pub fn compare_document_set_bytes(
+    documents: Vec<PdfDocumentSetInput>,
+    library_path: Option<&Path>,
+    options: PiffOptions,
+    strategy: PdfDocumentSetStrategy,
+    passwords: PdfPasswords<'_>,
+) -> Result<PdfDocumentSetResult, PiffError> {
+    const MAX_DOCUMENT_SET_REVISIONS: usize = 64;
+    validate_options(options)?;
+    if documents.len() < 2 {
+        return Err(PiffError::InvalidDocumentSet(
+            "at least two PDFs are required".to_owned(),
+        ));
+    }
+    if documents.len() > MAX_DOCUMENT_SET_REVISIONS {
+        return Err(PiffError::InvalidDocumentSet(format!(
+            "at most {MAX_DOCUMENT_SET_REVISIONS} PDFs are supported"
+        )));
+    }
+    let mut ids = HashSet::new();
+    for document in &documents {
+        if document.id.trim().is_empty() {
+            return Err(PiffError::InvalidDocumentSet(
+                "every PDF must have a non-empty id".to_owned(),
+            ));
+        }
+        if !ids.insert(document.id.as_str()) {
+            return Err(PiffError::InvalidDocumentSet(format!(
+                "duplicate revision id: {}",
+                document.id
+            )));
+        }
+    }
+
+    let edges: Vec<(usize, usize)> = match strategy {
+        PdfDocumentSetStrategy::Baseline => (1..documents.len()).map(|index| (0, index)).collect(),
+        PdfDocumentSetStrategy::Adjacent => (1..documents.len())
+            .map(|index| (index - 1, index))
+            .collect(),
+    };
+    let started = Instant::now();
+    let mut pairs = Vec::with_capacity(edges.len());
+    for (from_index, to_index) in edges {
+        let pair_options = PiffOptions {
+            include_previews: false,
+            ..options
+        };
+        let result = compare_bytes_with_passwords_and_progress(
+            documents[from_index].bytes.clone(),
+            documents[to_index].bytes.clone(),
+            library_path,
+            pair_options,
+            passwords,
+            None,
+            None,
+        )?;
+        pairs.push((from_index, to_index, result));
+    }
+
+    let mut page_counts = vec![None; documents.len()];
+    for (from_index, to_index, result) in &pairs {
+        page_counts[*from_index] = Some(result.before_page_count);
+        page_counts[*to_index] = Some(result.after_page_count);
+    }
+    let revisions = documents
+        .iter()
+        .enumerate()
+        .map(|(index, document)| PdfDocumentRevision {
+            id: document.id.clone(),
+            label: document.label.clone(),
+            index,
+            page_count: page_counts[index],
+        })
+        .collect::<Vec<_>>();
+    let comparisons = pairs
+        .iter()
+        .map(|(from_index, to_index, result)| PdfDocumentSetComparison {
+            from_revision_id: documents[*from_index].id.clone(),
+            to_revision_id: documents[*to_index].id.clone(),
+            equal: result.equal,
+            changed_pages: result
+                .pages
+                .iter()
+                .filter(|page| !matches!(page.status, PageStatus::Equal))
+                .count(),
+            changed_lines: result
+                .text_diff
+                .as_ref()
+                .map_or(0, |text_diff| text_diff.changed_lines),
+            truncated: result
+                .text_diff
+                .as_ref()
+                .is_some_and(|text_diff| text_diff.truncated),
+        })
+        .collect::<Vec<_>>();
+    let changes = build_document_set_changes(&pairs, &documents, &revisions);
+    let engine = pairs[0].2.engine.clone();
+    let stats = pairs.iter().fold(
+        PiffStats {
+            load_ms: 0.0,
+            fingerprint_ms: 0.0,
+            matching_ms: 0.0,
+            render_ms: 0.0,
+            compare_ms: 0.0,
+            region_ms: 0.0,
+            semantic_ms: 0.0,
+            total_ms: 0.0,
+        },
+        |mut total, (_, _, result)| {
+            total.load_ms += result.stats.load_ms;
+            total.fingerprint_ms += result.stats.fingerprint_ms;
+            total.matching_ms += result.stats.matching_ms;
+            total.render_ms += result.stats.render_ms;
+            total.compare_ms += result.stats.compare_ms;
+            total.region_ms += result.stats.region_ms;
+            total.semantic_ms += result.stats.semantic_ms;
+            total.total_ms += result.stats.total_ms;
+            total
+        },
+    );
+    let total_ms = elapsed_ms(started).max(stats.total_ms);
+    let stats = PiffStats { total_ms, ..stats };
+    Ok(PdfDocumentSetResult {
+        schema_version: RESULT_SCHEMA_VERSION,
+        primitive: "document-set",
+        engine,
+        equal: pairs.iter().all(|(_, _, result)| result.equal),
+        strategy,
+        revisions,
+        comparisons,
+        changes,
+        truncated: pairs.iter().any(|(_, _, result)| {
+            result
+                .text_diff
+                .as_ref()
+                .is_some_and(|text_diff| text_diff.truncated)
+        }),
+        stats,
     })
 }
 
@@ -2143,6 +2441,565 @@ fn review_side(kind: SemanticChangeKind) -> ReviewSide {
             ReviewSide::Both
         }
     }
+}
+
+#[derive(Debug)]
+struct MutableDocumentSetVariant {
+    id: String,
+    text: Option<String>,
+    revision_ids: Vec<String>,
+    anchor_ids: Vec<String>,
+}
+
+#[derive(Debug)]
+struct MutableDocumentSetChange {
+    id: String,
+    source: PdfChangeSource,
+    kind: PdfDocumentChangeKind,
+    page_index: Option<usize>,
+    structure: Option<SemanticTextBlockKind>,
+    anchors: Vec<PdfRevisionAnchor>,
+    variants: Vec<MutableDocumentSetVariant>,
+    comparisons: Vec<PdfRevisionComparisonDetail>,
+    visual: Option<PdfVisualChangeEvidence>,
+    order: usize,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct DocumentSetChangeSpec {
+    source: PdfChangeSource,
+    kind: PdfDocumentChangeKind,
+    page_index: Option<usize>,
+    structure: Option<SemanticTextBlockKind>,
+    order: usize,
+}
+
+fn build_document_set_changes(
+    pairs: &[(usize, usize, PiffResult)],
+    documents: &[PdfDocumentSetInput],
+    revisions: &[PdfDocumentRevision],
+) -> Vec<PdfChangeOperation> {
+    let revision_order = revisions
+        .iter()
+        .map(|revision| (revision.id.as_str(), revision.index))
+        .collect::<HashMap<_, _>>();
+    let mut keys = HashMap::<String, usize>::new();
+    let mut operations = Vec::<MutableDocumentSetChange>::new();
+    let mut next_order = 0;
+
+    for (from_index, to_index, result) in pairs {
+        let from = &documents[*from_index];
+        let to = &documents[*to_index];
+        let text_pages = result
+            .text_diff
+            .as_ref()
+            .map(|text_diff| {
+                text_diff
+                    .stream
+                    .iter()
+                    .map(|item| item.page_index)
+                    .collect::<HashSet<_>>()
+            })
+            .unwrap_or_default();
+
+        if let Some(text_diff) = result.text_diff.as_ref() {
+            for item in &text_diff.stream {
+                let page_status = result.pages.get(item.page_index).map(|page| page.status);
+                let key = document_set_text_key(from, to, item);
+                let operation = get_document_set_change(
+                    &mut keys,
+                    &mut operations,
+                    &key,
+                    DocumentSetChangeSpec {
+                        source: PdfChangeSource::Text,
+                        kind: document_set_kind(item.kind),
+                        page_index: Some(item.page_index),
+                        structure: Some(item.structure),
+                        order: next_order,
+                    },
+                );
+                next_order += 1;
+                add_document_set_text_anchors(operation, from, to, item, page_status);
+                add_document_set_comparison(
+                    operation,
+                    from,
+                    to,
+                    document_set_kind(item.kind),
+                    Some(item.text_diff.clone()),
+                );
+            }
+        }
+
+        for (page_index, page) in result.pages.iter().enumerate() {
+            for figure in &page.figures {
+                let key = document_set_figure_key(from, to, page_index, figure);
+                let operation = get_document_set_change(
+                    &mut keys,
+                    &mut operations,
+                    &key,
+                    DocumentSetChangeSpec {
+                        source: PdfChangeSource::Figure,
+                        kind: document_set_figure_kind(figure.status),
+                        page_index: Some(page_index),
+                        structure: None,
+                        order: next_order,
+                    },
+                );
+                next_order += 1;
+                add_document_set_figure_anchors(operation, from, to, page_index, page, figure);
+                add_document_set_comparison(
+                    operation,
+                    from,
+                    to,
+                    document_set_figure_kind(figure.status),
+                    None,
+                );
+            }
+
+            let page_kind = match page.status {
+                PageStatus::Inserted | PageStatus::Deleted | PageStatus::Moved => {
+                    Some(document_set_kind_for_page(page.status))
+                }
+                PageStatus::Modified
+                    if !text_pages.contains(&page_index) && page.figures.is_empty() =>
+                {
+                    Some(PdfDocumentChangeKind::Visual)
+                }
+                PageStatus::Equal | PageStatus::Modified => None,
+            };
+            if let Some(kind) = page_kind {
+                let source = if matches!(kind, PdfDocumentChangeKind::Visual) {
+                    PdfChangeSource::Visual
+                } else {
+                    PdfChangeSource::Page
+                };
+                let key_revision = if matches!(page.status, PageStatus::Inserted) {
+                    &to.id
+                } else {
+                    &from.id
+                };
+                let key_page = page.after_page.or(page.before_page).unwrap_or(page_index);
+                let key = format!("page:{key_revision}:{key_page}:{kind:?}");
+                let operation = get_document_set_change(
+                    &mut keys,
+                    &mut operations,
+                    &key,
+                    DocumentSetChangeSpec {
+                        source,
+                        kind,
+                        page_index: Some(page_index),
+                        structure: None,
+                        order: next_order,
+                    },
+                );
+                next_order += 1;
+                add_document_set_page_anchors(operation, from, to, page);
+                if matches!(kind, PdfDocumentChangeKind::Visual) {
+                    operation.visual = Some(PdfVisualChangeEvidence {
+                        changed_pixels: page.changed_pixels,
+                        changed_ratio: page.changed_ratio,
+                        regions: page.regions.clone(),
+                    });
+                }
+                add_document_set_comparison(operation, from, to, kind, None);
+            }
+        }
+    }
+
+    operations
+        .sort_by_key(|operation| (operation.page_index.unwrap_or(usize::MAX), operation.order));
+    operations
+        .into_iter()
+        .map(|operation| PdfChangeOperation {
+            id: operation.id,
+            source: operation.source,
+            kind: operation.kind,
+            page_index: operation.page_index,
+            structure: operation.structure,
+            anchors: sort_document_set_anchors(operation.anchors, &revision_order),
+            variants: operation
+                .variants
+                .into_iter()
+                .map(|mut variant| {
+                    variant.revision_ids.sort_by_key(|revision_id| {
+                        revision_order
+                            .get(revision_id.as_str())
+                            .copied()
+                            .unwrap_or(usize::MAX)
+                    });
+                    PdfRevisionVariant {
+                        id: variant.id,
+                        text: variant.text,
+                        revision_ids: variant.revision_ids,
+                        anchor_ids: variant.anchor_ids,
+                    }
+                })
+                .collect(),
+            comparisons: operation.comparisons,
+            visual: operation.visual,
+        })
+        .collect()
+}
+
+fn sort_document_set_anchors(
+    mut anchors: Vec<PdfRevisionAnchor>,
+    revision_order: &HashMap<&str, usize>,
+) -> Vec<PdfRevisionAnchor> {
+    anchors.sort_by_key(|anchor| {
+        revision_order
+            .get(anchor.revision_id.as_str())
+            .copied()
+            .unwrap_or(usize::MAX)
+    });
+    anchors
+}
+
+fn get_document_set_change<'a>(
+    keys: &mut HashMap<String, usize>,
+    operations: &'a mut Vec<MutableDocumentSetChange>,
+    key: &str,
+    spec: DocumentSetChangeSpec,
+) -> &'a mut MutableDocumentSetChange {
+    if let Some(index) = keys.get(key).copied() {
+        let operation = &mut operations[index];
+        operation.kind = merge_document_set_kinds(operation.kind, spec.kind);
+        if operation.structure.is_none() {
+            operation.structure = spec.structure;
+        }
+        return operation;
+    }
+    let index = operations.len();
+    keys.insert(key.to_owned(), index);
+    operations.push(MutableDocumentSetChange {
+        id: format!("change-{}", index + 1),
+        source: spec.source,
+        kind: spec.kind,
+        page_index: spec.page_index,
+        structure: spec.structure,
+        anchors: Vec::new(),
+        variants: Vec::new(),
+        comparisons: Vec::new(),
+        visual: None,
+        order: spec.order,
+    });
+    &mut operations[index]
+}
+
+fn add_document_set_text_anchors(
+    operation: &mut MutableDocumentSetChange,
+    from: &PdfDocumentSetInput,
+    to: &PdfDocumentSetInput,
+    item: &PdfDocumentReviewItem,
+    page_status: Option<PageStatus>,
+) {
+    if !matches!(item.kind, SemanticChangeKind::Added) {
+        add_document_set_anchor(
+            operation,
+            PdfRevisionAnchor {
+                id: format!("{}:anchor:{}", operation.id, from.id),
+                revision_id: from.id.clone(),
+                source: PdfChangeSource::Text,
+                state: document_set_state(item.kind),
+                page_index: item.before_page,
+                page_status,
+                block_id: Some(item.block_id.clone()),
+                figure_id: None,
+                structure: Some(item.structure),
+                confidence: Some(item.confidence),
+                text: item.before_text.clone(),
+                bounds: item.before_bounds,
+                focus_bounds: item.before_focus_bounds,
+            },
+        );
+    }
+    if !matches!(item.kind, SemanticChangeKind::Removed) {
+        add_document_set_anchor(
+            operation,
+            PdfRevisionAnchor {
+                id: format!("{}:anchor:{}", operation.id, to.id),
+                revision_id: to.id.clone(),
+                source: PdfChangeSource::Text,
+                state: document_set_state(item.kind),
+                page_index: item.after_page,
+                page_status,
+                block_id: Some(item.block_id.clone()),
+                figure_id: None,
+                structure: Some(item.structure),
+                confidence: Some(item.confidence),
+                text: item.after_text.clone(),
+                bounds: item.after_bounds,
+                focus_bounds: item.after_focus_bounds,
+            },
+        );
+    }
+}
+
+fn add_document_set_figure_anchors(
+    operation: &mut MutableDocumentSetChange,
+    from: &PdfDocumentSetInput,
+    to: &PdfDocumentSetInput,
+    page_index: usize,
+    page: &PdfPageDiff,
+    figure: &PdfFigureDiff,
+) {
+    let state = document_set_figure_state(figure.status);
+    if figure.before_bounds.is_some() {
+        add_document_set_anchor(
+            operation,
+            PdfRevisionAnchor {
+                id: format!("{}:anchor:{}", operation.id, from.id),
+                revision_id: from.id.clone(),
+                source: PdfChangeSource::Figure,
+                state,
+                page_index: page.before_page.or(Some(page_index)),
+                page_status: Some(page.status),
+                block_id: None,
+                figure_id: Some(figure.id.clone()),
+                structure: None,
+                confidence: Some(figure.confidence),
+                text: None,
+                bounds: figure.before_bounds,
+                focus_bounds: None,
+            },
+        );
+    }
+    if figure.after_bounds.is_some() {
+        add_document_set_anchor(
+            operation,
+            PdfRevisionAnchor {
+                id: format!("{}:anchor:{}", operation.id, to.id),
+                revision_id: to.id.clone(),
+                source: PdfChangeSource::Figure,
+                state,
+                page_index: page.after_page.or(Some(page_index)),
+                page_status: Some(page.status),
+                block_id: None,
+                figure_id: Some(figure.id.clone()),
+                structure: None,
+                confidence: Some(figure.confidence),
+                text: None,
+                bounds: figure.after_bounds,
+                focus_bounds: None,
+            },
+        );
+    }
+}
+
+fn add_document_set_page_anchors(
+    operation: &mut MutableDocumentSetChange,
+    from: &PdfDocumentSetInput,
+    to: &PdfDocumentSetInput,
+    page: &PdfPageDiff,
+) {
+    let state = match operation.kind {
+        PdfDocumentChangeKind::Added => PdfRevisionChangeState::Introduced,
+        PdfDocumentChangeKind::Removed => PdfRevisionChangeState::Removed,
+        PdfDocumentChangeKind::Moved => PdfRevisionChangeState::Moved,
+        _ => PdfRevisionChangeState::Modified,
+    };
+    if !matches!(operation.kind, PdfDocumentChangeKind::Added) {
+        add_document_set_anchor(
+            operation,
+            PdfRevisionAnchor {
+                id: format!("{}:anchor:{}", operation.id, from.id),
+                revision_id: from.id.clone(),
+                source: operation.source,
+                state,
+                page_index: page.before_page,
+                page_status: Some(page.status),
+                block_id: None,
+                figure_id: None,
+                structure: None,
+                confidence: Some(page.alignment.confidence),
+                text: None,
+                bounds: None,
+                focus_bounds: None,
+            },
+        );
+    }
+    if !matches!(operation.kind, PdfDocumentChangeKind::Removed) {
+        add_document_set_anchor(
+            operation,
+            PdfRevisionAnchor {
+                id: format!("{}:anchor:{}", operation.id, to.id),
+                revision_id: to.id.clone(),
+                source: operation.source,
+                state,
+                page_index: page.after_page,
+                page_status: Some(page.status),
+                block_id: None,
+                figure_id: None,
+                structure: None,
+                confidence: Some(page.alignment.confidence),
+                text: None,
+                bounds: None,
+                focus_bounds: None,
+            },
+        );
+    }
+}
+
+fn add_document_set_anchor(operation: &mut MutableDocumentSetChange, anchor: PdfRevisionAnchor) {
+    if operation
+        .anchors
+        .iter()
+        .any(|existing| existing.revision_id == anchor.revision_id)
+    {
+        return;
+    }
+    let text = anchor.text.clone();
+    let revision_id = anchor.revision_id.clone();
+    let anchor_id = anchor.id.clone();
+    operation.anchors.push(anchor);
+    let Some(text) = text.filter(|text| !text.trim().is_empty()) else {
+        return;
+    };
+    let key = normalize_document_set_text(&text);
+    let variant_index = operation.variants.iter().position(|variant| {
+        variant
+            .text
+            .as_deref()
+            .is_some_and(|value| normalize_document_set_text(value) == key)
+    });
+    let index = variant_index.unwrap_or_else(|| {
+        let index = operation.variants.len();
+        operation.variants.push(MutableDocumentSetVariant {
+            id: format!("{}:variant-{}", operation.id, index + 1),
+            text: Some(text),
+            revision_ids: Vec::new(),
+            anchor_ids: Vec::new(),
+        });
+        index
+    });
+    let variant = &mut operation.variants[index];
+    if !variant.revision_ids.contains(&revision_id) {
+        variant.revision_ids.push(revision_id);
+    }
+    if !variant.anchor_ids.contains(&anchor_id) {
+        variant.anchor_ids.push(anchor_id);
+    }
+}
+
+fn add_document_set_comparison(
+    operation: &mut MutableDocumentSetChange,
+    from: &PdfDocumentSetInput,
+    to: &PdfDocumentSetInput,
+    kind: PdfDocumentChangeKind,
+    text_diff: Option<TextDiff>,
+) {
+    if operation.comparisons.iter().any(|comparison| {
+        comparison.from_revision_id == from.id && comparison.to_revision_id == to.id
+    }) {
+        return;
+    }
+    operation.comparisons.push(PdfRevisionComparisonDetail {
+        from_revision_id: from.id.clone(),
+        to_revision_id: to.id.clone(),
+        kind,
+        text_diff,
+    });
+}
+
+fn document_set_text_key(
+    from: &PdfDocumentSetInput,
+    to: &PdfDocumentSetInput,
+    item: &PdfDocumentReviewItem,
+) -> String {
+    let page = item
+        .before_page
+        .or(item.after_page)
+        .unwrap_or(item.page_index);
+    if matches!(item.kind, SemanticChangeKind::Added) {
+        return format!(
+            "text:{}:{}:added:{}:{:?}",
+            to.id,
+            page,
+            normalize_document_set_text(item.after_text.as_deref().unwrap_or_default()),
+            item.structure
+        );
+    }
+    format!("text:{}:{}:{}", from.id, page, item.block_id)
+}
+
+fn document_set_figure_key(
+    from: &PdfDocumentSetInput,
+    to: &PdfDocumentSetInput,
+    page_index: usize,
+    figure: &PdfFigureDiff,
+) -> String {
+    let revision_id = if matches!(figure.status, FigureStatus::Added) {
+        &to.id
+    } else {
+        &from.id
+    };
+    format!("figure:{revision_id}:{page_index}:{}", figure.id)
+}
+
+fn document_set_state(kind: SemanticChangeKind) -> PdfRevisionChangeState {
+    match kind {
+        SemanticChangeKind::Added => PdfRevisionChangeState::Introduced,
+        SemanticChangeKind::Removed => PdfRevisionChangeState::Removed,
+        SemanticChangeKind::Modified => PdfRevisionChangeState::Modified,
+        SemanticChangeKind::Moved => PdfRevisionChangeState::Moved,
+        SemanticChangeKind::Reflowed => PdfRevisionChangeState::Reflowed,
+    }
+}
+
+fn document_set_kind(kind: SemanticChangeKind) -> PdfDocumentChangeKind {
+    match kind {
+        SemanticChangeKind::Added => PdfDocumentChangeKind::Added,
+        SemanticChangeKind::Removed => PdfDocumentChangeKind::Removed,
+        SemanticChangeKind::Modified => PdfDocumentChangeKind::Modified,
+        SemanticChangeKind::Moved => PdfDocumentChangeKind::Moved,
+        SemanticChangeKind::Reflowed => PdfDocumentChangeKind::Reflowed,
+    }
+}
+
+fn document_set_figure_state(status: FigureStatus) -> PdfRevisionChangeState {
+    match status {
+        FigureStatus::Added => PdfRevisionChangeState::Introduced,
+        FigureStatus::Removed => PdfRevisionChangeState::Removed,
+        FigureStatus::Modified => PdfRevisionChangeState::Modified,
+        FigureStatus::Moved => PdfRevisionChangeState::Moved,
+        FigureStatus::Swapped => PdfRevisionChangeState::Swapped,
+    }
+}
+
+fn document_set_figure_kind(status: FigureStatus) -> PdfDocumentChangeKind {
+    match status {
+        FigureStatus::Added => PdfDocumentChangeKind::Added,
+        FigureStatus::Removed => PdfDocumentChangeKind::Removed,
+        FigureStatus::Modified => PdfDocumentChangeKind::Modified,
+        FigureStatus::Moved => PdfDocumentChangeKind::Moved,
+        FigureStatus::Swapped => PdfDocumentChangeKind::Swapped,
+    }
+}
+
+fn document_set_kind_for_page(status: PageStatus) -> PdfDocumentChangeKind {
+    match status {
+        PageStatus::Inserted => PdfDocumentChangeKind::Added,
+        PageStatus::Deleted => PdfDocumentChangeKind::Removed,
+        PageStatus::Moved => PdfDocumentChangeKind::Moved,
+        PageStatus::Equal | PageStatus::Modified => PdfDocumentChangeKind::Visual,
+    }
+}
+
+fn merge_document_set_kinds(
+    left: PdfDocumentChangeKind,
+    right: PdfDocumentChangeKind,
+) -> PdfDocumentChangeKind {
+    if left == right {
+        left
+    } else {
+        PdfDocumentChangeKind::Diverged
+    }
+}
+
+fn normalize_document_set_text(text: &str) -> String {
+    text.split_whitespace()
+        .map(str::to_lowercase)
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn page_warnings(

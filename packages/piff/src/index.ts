@@ -14,6 +14,7 @@ import type {
   PdfEngineInfo,
   PdfFigureDiff,
   PiffResult,
+  PiffStats,
   PdfSemanticPageDiff,
   PdfSemanticTextBlockKind,
   PdfSemanticTextBlockRole,
@@ -28,6 +29,22 @@ import type {
   PiffCacheDiagnostics,
   PiffSessionOptions,
   PdfPagePreviewTiming,
+  PdfChangeOperation,
+  PdfChangeSource,
+  PdfDocumentChangeKind,
+  PdfDocumentRevision,
+  PdfDocumentSetComparison,
+  PdfDocumentSetStrategy,
+  PdfRevisionAnchor,
+  PdfRevisionChangeState,
+  PdfRevisionComparisonDetail,
+  PdfRevisionVariant,
+  PiffDocumentInput,
+  PiffDocumentSetOptions,
+  PiffDocumentSetProgress,
+  PiffDocumentSetResult,
+  PiffDocumentSetRunOptions,
+  PiffDocumentSetStats,
 } from './types.js'
 
 export type PiffErrorCode =
@@ -468,6 +485,653 @@ export class PiffSession {
   }
 }
 
+type DocumentSetEdge = {
+  from: PiffDocumentInput
+  to: PiffDocumentInput
+}
+
+type DocumentSetPair = {
+  edge: DocumentSetEdge
+  result: PiffResult
+}
+
+type MutableRevisionVariant = {
+  id: string
+  text?: string
+  revisionIds: Set<string>
+  anchorIds: Set<string>
+}
+
+type MutableChangeOperation = {
+  id: string
+  source: PdfChangeSource
+  kind: PdfDocumentChangeKind
+  pageIndex?: number
+  structure?: PdfSemanticTextBlockKind
+  anchors: Map<string, PdfRevisionAnchor>
+  variants: Map<string, MutableRevisionVariant>
+  comparisons: Map<string, PdfRevisionComparisonDetail>
+  visual?: {
+    changedPixels: number
+    changedRatio: number
+    regions: PiffRegion[]
+  }
+  order: number
+}
+
+const MAX_DOCUMENT_SET_REVISIONS = 64
+
+/**
+ * Compares an ordered set of PDF revisions through revision-neutral change operations.
+ *
+ * The default baseline strategy compares revision zero with every other revision. The
+ * adjacent strategy compares each revision with its predecessor. The set keeps pair sessions
+ * alive so page previews can be requested lazily for any edge that has been compared.
+ */
+export class PiffDocumentSet {
+  private closed = false
+  private comparison: Promise<PiffDocumentSetResult> | undefined
+  private readonly sessions = new Map<string, PiffSession>()
+
+  private constructor(
+    private readonly documents: readonly PiffDocumentInput[],
+    private readonly options: PiffOptions,
+    private readonly strategy: PdfDocumentSetStrategy,
+    private readonly sessionOptions?: PiffSessionOptions,
+  ) {}
+
+  static async open(
+    documents: readonly PiffDocumentInput[],
+    options?: PiffDocumentSetOptions,
+    sessionOptions?: PiffSessionOptions,
+  ): Promise<PiffDocumentSet> {
+    const normalized = normalizeDocumentSetInputs(documents)
+    const strategy = options?.strategy ?? 'baseline'
+    if (strategy !== 'baseline' && strategy !== 'adjacent') {
+      throw new PiffError('invalid-options', `Unsupported document-set strategy: ${strategy}`)
+    }
+    const { strategy: _ignoredStrategy, ...comparisonOptions } = options ?? {}
+    return new PiffDocumentSet(
+      normalized,
+      normalizeDocumentSetComparisonOptions(comparisonOptions),
+      strategy,
+      sessionOptions,
+    )
+  }
+
+  async compare(runOptions?: PiffDocumentSetRunOptions): Promise<PiffDocumentSetResult> {
+    this.ensureOpen()
+    throwIfAborted(runOptions?.signal)
+    if (this.comparison === undefined) {
+      let comparison: Promise<PiffDocumentSetResult>
+      comparison = this.compareSet(runOptions).catch((error: unknown) => {
+        if (this.comparison === comparison) {
+          this.comparison = undefined
+        }
+        throw toPiffError(error)
+      })
+      this.comparison = comparison
+    }
+    return this.comparison
+  }
+
+  /** Render a page diff for any two revisions without materializing other previews. */
+  async renderPageDiff(
+    fromRevisionId: string,
+    toRevisionId: string,
+    pageIndex: number,
+    options?: PdfPagePreviewOptions,
+  ): Promise<Uint8Array> {
+    this.ensureOpen()
+    const session = await this.sessionFor(fromRevisionId, toRevisionId)
+    return session.renderPageDiff(pageIndex, options)
+  }
+
+  async close(): Promise<void> {
+    this.closed = true
+    this.comparison = undefined
+    await Promise.all([...this.sessions.values()].map((session) => session.close()))
+    this.sessions.clear()
+  }
+
+  private async compareSet(
+    runOptions?: PiffDocumentSetRunOptions,
+  ): Promise<PiffDocumentSetResult> {
+    const edges = this.edges()
+    const started = nowMs()
+    const pairs: DocumentSetPair[] = []
+    for (const [index, edge] of edges.entries()) {
+      throwIfAborted(runOptions?.signal)
+      const session = await this.sessionFor(edge.from.id, edge.to.id)
+      const result = await session.compare({
+        signal: runOptions?.signal,
+        onProgress: (event) => {
+          runOptions?.onProgress?.({
+            ...event,
+            comparisonIndex: index + 1,
+            comparisonTotal: edges.length,
+            fromRevisionId: edge.from.id,
+            toRevisionId: edge.to.id,
+          })
+        },
+      })
+      pairs.push({ edge, result })
+    }
+
+    const pageCounts = new Map<string, number>()
+    for (const pair of pairs) {
+      pageCounts.set(pair.edge.from.id, pair.result.before.pageCount)
+      pageCounts.set(pair.edge.to.id, pair.result.after.pageCount)
+    }
+    const revisions: PdfDocumentRevision[] = this.documents.map((document, index) => ({
+      id: document.id,
+      label: document.label ?? document.id,
+      index,
+      pageCount: pageCounts.get(document.id),
+    }))
+    const comparisons: PdfDocumentSetComparison[] = pairs.map(({ edge, result }) => ({
+      fromRevisionId: edge.from.id,
+      toRevisionId: edge.to.id,
+      equal: result.equal,
+      changedPages: result.pages.filter((page) => page.status !== 'equal').length,
+      changedLines: result.textDiff?.changedLines ?? 0,
+      truncated: result.textDiff?.truncated ?? false,
+    }))
+    const stats = sumDocumentSetStats(pairs.map(({ result }) => result.stats))
+    stats.totalMs = Math.max(stats.totalMs, nowMs() - started)
+    return {
+      schemaVersion: 1,
+      primitive: 'document-set',
+      engine: pairs[0].result.engine,
+      equal: pairs.every(({ result }) => result.equal),
+      strategy: this.strategy,
+      revisions,
+      comparisons,
+      changes: buildDocumentSetChanges(pairs, revisions),
+      truncated: comparisons.some((comparison) => comparison.truncated),
+      stats,
+    }
+  }
+
+  private edges(): DocumentSetEdge[] {
+    if (this.strategy === 'adjacent') {
+      return this.documents.slice(1).map((to, index) => ({
+        from: this.documents[index],
+        to,
+      }))
+    }
+    const [baseline, ...candidates] = this.documents
+    return candidates.map((to) => ({ from: baseline, to }))
+  }
+
+  private async sessionFor(fromRevisionId: string, toRevisionId: string): Promise<PiffSession> {
+    const from = this.documents.find((document) => document.id === fromRevisionId)
+    const to = this.documents.find((document) => document.id === toRevisionId)
+    if (from === undefined || to === undefined || from === to) {
+      throw new PiffError(
+        'invalid-options',
+        `Unknown or identical document-set revisions: ${fromRevisionId} -> ${toRevisionId}`,
+      )
+    }
+    const key = documentSetEdgeKey(from.id, to.id)
+    const cached = this.sessions.get(key)
+    if (cached !== undefined) {
+      return cached
+    }
+    const session = await PiffSession.open(from.bytes, to.bytes, this.options, this.sessionOptions)
+    this.sessions.set(key, session)
+    return session
+  }
+
+  private ensureOpen(): void {
+    if (this.closed) {
+      throw new Error('PiffDocumentSet is closed')
+    }
+  }
+}
+
+/** Compare multiple PDFs and return revision-neutral changes. */
+export async function piffSet(
+  documents: readonly PiffDocumentInput[],
+  options?: PiffDocumentSetOptions,
+  runOptions?: PiffDocumentSetRunOptions,
+): Promise<PiffDocumentSetResult> {
+  const set = await PiffDocumentSet.open(documents, options)
+  try {
+    return await set.compare(runOptions)
+  } finally {
+    await set.close()
+  }
+}
+
+function normalizeDocumentSetInputs(
+  documents: readonly PiffDocumentInput[],
+): PiffDocumentInput[] {
+  if (!Array.isArray(documents) || documents.length < 2) {
+    throw new PiffError('invalid-options', 'A document set requires at least two PDFs')
+  }
+  if (documents.length > MAX_DOCUMENT_SET_REVISIONS) {
+    throw new PiffError(
+      'invalid-options',
+      `A document set supports at most ${MAX_DOCUMENT_SET_REVISIONS} PDFs`,
+    )
+  }
+  const ids = new Set<string>()
+  return documents.map((document, index) => {
+    if (document === undefined || typeof document.id !== 'string' || document.id.trim() === '') {
+      throw new PiffError('invalid-options', `Document ${index + 1} must have a non-empty id`)
+    }
+    if (ids.has(document.id)) {
+      throw new PiffError('invalid-options', `Document-set revision id is duplicated: ${document.id}`)
+    }
+    if (!(document.bytes instanceof Uint8Array) || document.bytes.byteLength === 0) {
+      throw new PiffError('invalid-options', `Document ${document.id} must contain PDF bytes`)
+    }
+    ids.add(document.id)
+    return {
+      id: document.id,
+      label: document.label ?? document.id,
+      bytes: document.bytes,
+    }
+  })
+}
+
+function normalizeDocumentSetComparisonOptions(
+  options: PiffOptions,
+): PiffOptions {
+  const mode = options.mode ?? 'semantic'
+  return {
+    ...options,
+    mode,
+    render: options.render ?? (mode === 'visual' ? 'full' : 'none'),
+  }
+}
+
+function documentSetEdgeKey(fromRevisionId: string, toRevisionId: string): string {
+  return `${fromRevisionId}\u0000${toRevisionId}`
+}
+
+function buildDocumentSetChanges(
+  pairs: readonly DocumentSetPair[],
+  revisions: readonly PdfDocumentRevision[],
+): PdfChangeOperation[] {
+  const revisionOrder = new Map(revisions.map((revision) => [revision.id, revision.index]))
+  const operations = new Map<string, MutableChangeOperation>()
+  let nextOrder = 0
+
+  for (const { edge, result } of pairs) {
+    const stream = result.textDiff?.stream ?? []
+    const streamByPage = new Map<number, number>()
+    for (const item of stream) {
+      streamByPage.set(item.pageIndex, (streamByPage.get(item.pageIndex) ?? 0) + 1)
+      const page = result.pages[item.pageIndex]
+      const key = textOperationKey(edge, item)
+      const operation = getMutableChange(
+        operations,
+        key,
+        'text',
+        item.kind,
+        item.pageIndex,
+        item.structure,
+        nextOrder++,
+      )
+      addTextAnchors(operation, edge, item, page?.status)
+      addComparisonDetail(operation, edge, item.kind, item.textDiff)
+    }
+
+    for (const [pageIndex, page] of result.pages.entries()) {
+      for (const figure of page.figures) {
+        const key = figureOperationKey(edge, pageIndex, figure)
+        const operation = getMutableChange(
+          operations,
+          key,
+          'figure',
+          figure.status,
+          pageIndex,
+          undefined,
+          nextOrder++,
+        )
+        addFigureAnchors(operation, edge, pageIndex, page.status, figure)
+        addComparisonDetail(operation, edge, figure.status)
+      }
+
+      if (page.status === 'inserted' || page.status === 'deleted') {
+        addPageOperation(operations, edge, pageIndex, page, page.status, nextOrder++)
+      } else if (page.status === 'moved') {
+        addPageOperation(operations, edge, pageIndex, page, page.status, nextOrder++)
+      } else if (
+        page.status !== 'equal'
+        && (streamByPage.get(pageIndex) ?? 0) === 0
+        && page.figures.length === 0
+      ) {
+        addPageOperation(operations, edge, pageIndex, page, 'visual', nextOrder++)
+      }
+    }
+  }
+
+  return [...operations.values()]
+    .sort((left, right) => {
+      const leftPage = left.pageIndex ?? Number.MAX_SAFE_INTEGER
+      const rightPage = right.pageIndex ?? Number.MAX_SAFE_INTEGER
+      return leftPage - rightPage || left.order - right.order
+    })
+    .map((operation) => ({
+      id: operation.id,
+      source: operation.source,
+      kind: operation.kind,
+      pageIndex: operation.pageIndex,
+      structure: operation.structure,
+      anchors: [...operation.anchors.values()].sort(
+        (left, right) => (revisionOrder.get(left.revisionId) ?? 0) - (revisionOrder.get(right.revisionId) ?? 0),
+      ),
+      variants: [...operation.variants.values()].map((variant) => ({
+        id: variant.id,
+        text: variant.text,
+        revisionIds: [...variant.revisionIds].sort(
+          (left, right) => (revisionOrder.get(left) ?? 0) - (revisionOrder.get(right) ?? 0),
+        ),
+        anchorIds: [...variant.anchorIds],
+      })),
+      comparisons: [...operation.comparisons.values()],
+      visual: operation.visual,
+    }))
+}
+
+type DocumentSetReviewItem = NonNullable<PiffResult['textDiff']>['stream'][number]
+type DocumentSetFigure = PiffResult['pages'][number]['figures'][number]
+type DocumentSetPage = PiffResult['pages'][number]
+
+function textOperationKey(edge: DocumentSetEdge, item: DocumentSetReviewItem): string {
+  const page = item.beforePage ?? item.afterPage ?? item.pageIndex
+  if (item.kind === 'added') {
+    return `text:${edge.to.id}:${page}:added:${normalizeVariantText(item.afterText)}:${item.structure}`
+  }
+  return `text:${edge.from.id}:${page}:${item.blockId}`
+}
+
+function figureOperationKey(
+  edge: DocumentSetEdge,
+  pageIndex: number,
+  figure: DocumentSetFigure,
+): string {
+  const revisionId = figure.status === 'added' ? edge.to.id : edge.from.id
+  const bounds = figure.afterBounds ?? figure.beforeBounds
+  return `figure:${revisionId}:${pageIndex}:${figure.id}:${boundsKey(bounds)}`
+}
+
+function getMutableChange(
+  operations: Map<string, MutableChangeOperation>,
+  key: string,
+  source: PdfChangeSource,
+  kind: PdfDocumentChangeKind,
+  pageIndex: number | undefined,
+  structure: PdfSemanticTextBlockKind | undefined,
+  order: number,
+): MutableChangeOperation {
+  const existing = operations.get(key)
+  if (existing !== undefined) {
+    existing.kind = mergeDocumentChangeKinds(existing.kind, kind)
+    existing.structure ??= structure
+    return existing
+  }
+  const operation: MutableChangeOperation = {
+    id: `change-${operations.size + 1}`,
+    source,
+    kind,
+    pageIndex,
+    structure,
+    anchors: new Map(),
+    variants: new Map(),
+    comparisons: new Map(),
+    order,
+  }
+  operations.set(key, operation)
+  return operation
+}
+
+function addTextAnchors(
+  operation: MutableChangeOperation,
+  edge: DocumentSetEdge,
+  item: DocumentSetReviewItem,
+  pageStatus: PiffResult['pages'][number]['status'] | undefined,
+): void {
+  if (item.kind !== 'added') {
+    addAnchor(operation, {
+      id: `${operation.id}:anchor:${edge.from.id}`,
+      revisionId: edge.from.id,
+      source: 'text',
+      state: revisionState(item.kind),
+      pageIndex: item.beforePage,
+      pageStatus,
+      blockId: item.blockId,
+      structure: item.structure,
+      confidence: item.confidence,
+      text: item.beforeText,
+      bounds: item.beforeBounds,
+      focusBounds: item.beforeFocusBounds,
+    })
+  }
+  if (item.kind !== 'removed') {
+    addAnchor(operation, {
+      id: `${operation.id}:anchor:${edge.to.id}`,
+      revisionId: edge.to.id,
+      source: 'text',
+      state: revisionState(item.kind),
+      pageIndex: item.afterPage,
+      pageStatus,
+      blockId: item.blockId,
+      structure: item.structure,
+      confidence: item.confidence,
+      text: item.afterText,
+      bounds: item.afterBounds,
+      focusBounds: item.afterFocusBounds,
+    })
+  }
+}
+
+function addFigureAnchors(
+  operation: MutableChangeOperation,
+  edge: DocumentSetEdge,
+  pageIndex: number,
+  pageStatus: PiffResult['pages'][number]['status'],
+  figure: DocumentSetFigure,
+): void {
+  const state = figure.status === 'added'
+    ? 'introduced'
+    : figure.status === 'removed'
+      ? 'removed'
+      : figure.status
+  if (figure.beforeBounds !== undefined) {
+    addAnchor(operation, {
+      id: `${operation.id}:anchor:${edge.from.id}`,
+      revisionId: edge.from.id,
+      source: 'figure',
+      state,
+      pageIndex,
+      pageStatus,
+      figureId: figure.id,
+      confidence: figure.confidence,
+      bounds: figure.beforeBounds,
+    })
+  }
+  if (figure.afterBounds !== undefined) {
+    addAnchor(operation, {
+      id: `${operation.id}:anchor:${edge.to.id}`,
+      revisionId: edge.to.id,
+      source: 'figure',
+      state,
+      pageIndex,
+      pageStatus,
+      figureId: figure.id,
+      confidence: figure.confidence,
+      bounds: figure.afterBounds,
+    })
+  }
+}
+
+function addPageOperation(
+  operations: Map<string, MutableChangeOperation>,
+  edge: DocumentSetEdge,
+  pageIndex: number,
+  page: DocumentSetPage,
+  status: 'inserted' | 'deleted' | 'moved' | 'visual',
+  order: number,
+): void {
+  const kind: PdfDocumentChangeKind = status === 'inserted'
+    ? 'added'
+    : status === 'deleted'
+      ? 'removed'
+      : status === 'moved'
+        ? 'moved'
+        : 'visual'
+  const keyRevision = status === 'inserted' ? edge.to.id : edge.from.id
+  const keyPage = page.afterPage ?? page.beforePage ?? pageIndex
+  const operation = getMutableChange(
+    operations,
+    `page:${keyRevision}:${keyPage}:${kind}`,
+    status === 'visual' ? 'visual' : 'page',
+    kind,
+    pageIndex,
+    undefined,
+    order,
+  )
+  const state: PdfRevisionChangeState = status === 'inserted'
+    ? 'introduced'
+    : status === 'deleted'
+      ? 'removed'
+      : status === 'moved'
+        ? 'moved'
+        : 'modified'
+  if (status !== 'inserted') {
+    addAnchor(operation, {
+      id: `${operation.id}:anchor:${edge.from.id}`,
+      revisionId: edge.from.id,
+      source: operation.source,
+      state,
+      pageIndex: page.beforePage,
+      pageStatus: page.status,
+      confidence: page.alignment.confidence,
+    })
+  }
+  if (status !== 'deleted') {
+    addAnchor(operation, {
+      id: `${operation.id}:anchor:${edge.to.id}`,
+      revisionId: edge.to.id,
+      source: operation.source,
+      state,
+      pageIndex: page.afterPage,
+      pageStatus: page.status,
+      confidence: page.alignment.confidence,
+    })
+  }
+  if (status === 'visual') {
+    operation.visual = {
+      changedPixels: page.changedPixels,
+      changedRatio: page.changedRatio,
+      regions: page.regions,
+    }
+  }
+  addComparisonDetail(operation, edge, kind)
+}
+
+function addAnchor(operation: MutableChangeOperation, anchor: PdfRevisionAnchor): void {
+  const existing = operation.anchors.get(anchor.revisionId)
+  if (existing !== undefined) {
+    return
+  }
+  operation.anchors.set(anchor.revisionId, anchor)
+  if (anchor.text === undefined || anchor.text.trim() === '') {
+    return
+  }
+  const key = normalizeVariantText(anchor.text)
+  let variant = operation.variants.get(key)
+  if (variant === undefined) {
+    variant = {
+      id: `${operation.id}:variant-${operation.variants.size + 1}`,
+      text: anchor.text,
+      revisionIds: new Set(),
+      anchorIds: new Set(),
+    }
+    operation.variants.set(key, variant)
+  }
+  variant.revisionIds.add(anchor.revisionId)
+  variant.anchorIds.add(anchor.id)
+}
+
+function addComparisonDetail(
+  operation: MutableChangeOperation,
+  edge: DocumentSetEdge,
+  kind: PdfDocumentChangeKind,
+  textDiff?: PdfTextDiff,
+): void {
+  const key = documentSetEdgeKey(edge.from.id, edge.to.id)
+  if (operation.comparisons.has(key)) {
+    return
+  }
+  operation.comparisons.set(key, {
+    fromRevisionId: edge.from.id,
+    toRevisionId: edge.to.id,
+    kind,
+    textDiff,
+  })
+}
+
+function revisionState(kind: PdfSemanticTextChange['kind']): PdfRevisionChangeState {
+  return kind === 'added'
+    ? 'introduced'
+    : kind === 'removed'
+      ? 'removed'
+      : kind
+}
+
+function mergeDocumentChangeKinds(
+  left: PdfDocumentChangeKind,
+  right: PdfDocumentChangeKind,
+): PdfDocumentChangeKind {
+  return left === right ? left : 'diverged'
+}
+
+function normalizeVariantText(text: string | undefined): string {
+  return text?.trim().replace(/\s+/g, ' ').toLocaleLowerCase() ?? ''
+}
+
+function boundsKey(
+  bounds: { x: number; y: number; width: number; height: number } | undefined,
+): string {
+  return bounds === undefined
+    ? 'none'
+    : [bounds.x, bounds.y, bounds.width, bounds.height].map((value) => value.toFixed(2)).join(',')
+}
+
+function sumDocumentSetStats(stats: readonly PiffStats[]): PiffDocumentSetStats {
+  return stats.reduce<PiffDocumentSetStats>(
+    (total, current) => ({
+      loadMs: total.loadMs + current.loadMs,
+      fingerprintMs: total.fingerprintMs + current.fingerprintMs,
+      matchingMs: total.matchingMs + current.matchingMs,
+      renderMs: total.renderMs + current.renderMs,
+      compareMs: total.compareMs + current.compareMs,
+      regionMs: total.regionMs + current.regionMs,
+      semanticMs: total.semanticMs + current.semanticMs,
+      totalMs: total.totalMs + current.totalMs,
+    }),
+    {
+      loadMs: 0,
+      fingerprintMs: 0,
+      matchingMs: 0,
+      renderMs: 0,
+      compareMs: 0,
+      regionMs: 0,
+      semanticMs: 0,
+      totalMs: 0,
+    },
+  )
+}
+
+function nowMs(): number {
+  return globalThis.performance?.now() ?? Date.now()
+}
+
 /** Compare two PDF byte buffers through the asynchronous Rust/PDFium binding. */
 export async function piff(
   before: Uint8Array,
@@ -823,4 +1487,20 @@ export type {
   PdfTextDiffLineKind,
   PdfTextDiffSpan,
   PdfTextDiffSpanKind,
+  PdfChangeOperation,
+  PdfChangeSource,
+  PdfDocumentChangeKind,
+  PdfDocumentRevision,
+  PdfDocumentSetComparison,
+  PdfDocumentSetStrategy,
+  PdfRevisionAnchor,
+  PdfRevisionChangeState,
+  PdfRevisionComparisonDetail,
+  PdfRevisionVariant,
+  PiffDocumentInput,
+  PiffDocumentSetOptions,
+  PiffDocumentSetProgress,
+  PiffDocumentSetResult,
+  PiffDocumentSetRunOptions,
+  PiffDocumentSetStats,
 } from './types.js'

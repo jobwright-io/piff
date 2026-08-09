@@ -6,10 +6,11 @@ use std::path::{Path, PathBuf};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use piff_core::DiffOptions;
 use piff_pdfium::{
-    check_pdfium, compare_files_with_passwords, default_linux_pdfium_path, engine_info,
-    is_equal_bytes_with_passwords_and_progress, PageMatching, PageStatus, PdfEngineInfo,
-    PdfPasswords, PdfResourceLimits, PiffError, PiffMode, PiffOptions, PiffResult, RenderMode,
-    ReviewSide, RESULT_SCHEMA_VERSION,
+    check_pdfium, compare_document_set_bytes, compare_files_with_passwords,
+    default_linux_pdfium_path, engine_info, is_equal_bytes_with_passwords_and_progress,
+    PageMatching, PageStatus, PdfDocumentSetInput, PdfDocumentSetResult, PdfDocumentSetStrategy,
+    PdfEngineInfo, PdfPasswords, PdfResourceLimits, PiffError, PiffMode, PiffOptions, PiffResult,
+    RenderMode, ReviewSide, RESULT_SCHEMA_VERSION,
 };
 use piff_semantic::{SemanticChangeKind, TextDiffLineKind, TextReadingOrder};
 use serde::Serialize;
@@ -44,10 +45,22 @@ enum ReadingOrderArg {
     Columns,
 }
 
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum DocumentSetStrategyArg {
+    Baseline,
+    Adjacent,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum DocumentSetFormatArg {
+    Inline,
+    Json,
+}
+
 #[derive(Debug, Parser)]
 #[command(
     name = "piff",
-    about = "Compare two PDF files through a Rust/PDFium pipeline"
+    about = "Compare PDF files through a Rust/PDFium pipeline"
 )]
 struct Cli {
     #[command(subcommand)]
@@ -62,6 +75,8 @@ enum Command {
     Diff(DiffCommand),
     /// Stop at the first difference and return a CI-friendly equality result.
     Equal(EqualCommand),
+    /// Compare an ordered set of PDFs using revision-neutral change operations.
+    Series(SeriesCommand),
     /// Verify that the configured PDFium backend can be loaded.
     Doctor(DoctorCommand),
 }
@@ -128,6 +143,27 @@ struct EqualCommand {
     /// Emit compact JSON instead of pretty-printed JSON.
     #[arg(long)]
     compact: bool,
+}
+
+#[derive(Debug, Args)]
+struct SeriesCommand {
+    /// PDFs in revision order. The first PDF is the baseline by default.
+    #[arg(value_name = "PDF", num_args = 2..)]
+    documents: Vec<PathBuf>,
+    #[command(flatten)]
+    settings: ComparisonSettings,
+    /// Compare every revision to the first PDF, or compare adjacent revisions.
+    #[arg(long, value_enum, default_value_t = DocumentSetStrategyArg::Baseline)]
+    strategy: DocumentSetStrategyArg,
+    /// Output a revision-labelled inline diff or the machine-readable change set.
+    #[arg(long, value_enum, default_value_t = DocumentSetFormatArg::Inline)]
+    format: DocumentSetFormatArg,
+    /// Emit compact JSON when --format json is selected.
+    #[arg(long, requires = "format", default_value_t = false)]
+    compact: bool,
+    /// Write output to a file instead of stdout.
+    #[arg(long)]
+    output: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]
@@ -293,6 +329,7 @@ fn run() -> Result<i32, CliError> {
         Command::Compare(command) => run_compare(command),
         Command::Diff(command) => run_diff(command),
         Command::Equal(command) => run_equal(command),
+        Command::Series(command) => run_series(command),
         Command::Doctor(command) => run_doctor(command),
     }
 }
@@ -393,6 +430,54 @@ fn run_equal(command: EqualCommand) -> Result<i32, CliError> {
     };
     write_json(&output, command.output.as_deref(), command.compact)?;
     Ok(if equal { 0 } else { EXIT_DIFFERENT })
+}
+
+fn run_series(command: SeriesCommand) -> Result<i32, CliError> {
+    let library_path = resolve_library_path(command.settings.pdfium.clone());
+    let documents = command
+        .documents
+        .iter()
+        .map(|path| {
+            Ok(PdfDocumentSetInput {
+                id: document_revision_id(path),
+                label: path.display().to_string(),
+                bytes: read_input(path)?,
+            })
+        })
+        .collect::<Result<Vec<_>, CliError>>()?;
+    let options = command
+        .settings
+        .to_options(false, DiffModeArg::Semantic, RenderModeArg::None);
+    let strategy = match command.strategy {
+        DocumentSetStrategyArg::Baseline => PdfDocumentSetStrategy::Baseline,
+        DocumentSetStrategyArg::Adjacent => PdfDocumentSetStrategy::Adjacent,
+    };
+    let result = compare_document_set_bytes(
+        documents,
+        library_path.as_deref(),
+        options,
+        strategy,
+        command.settings.passwords(),
+    )?;
+    match command.format {
+        DocumentSetFormatArg::Inline => {
+            write_text(
+                &render_document_set_inline(&result),
+                command.output.as_deref(),
+            )?;
+        }
+        DocumentSetFormatArg::Json => {
+            write_json(&result, command.output.as_deref(), command.compact)?;
+        }
+    }
+    Ok(if result.equal { 0 } else { EXIT_DIFFERENT })
+}
+
+fn document_revision_id(path: &Path) -> String {
+    path.file_stem()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.is_empty())
+        .map_or_else(|| path.display().to_string(), ToOwned::to_owned)
 }
 
 fn run_doctor(command: DoctorCommand) -> Result<i32, CliError> {
@@ -566,6 +651,96 @@ fn render_text_diff(result: &PiffResult, before: &Path, after: &Path) -> String 
     }
 
     output
+}
+
+fn render_document_set_inline(result: &PdfDocumentSetResult) -> String {
+    if result.equal {
+        return String::new();
+    }
+    let mut output = String::new();
+    for revision in &result.revisions {
+        let _ = writeln!(output, "=== [{}] {} ===", revision.id, revision.label);
+    }
+    for change in &result.changes {
+        let revisions = change
+            .anchors
+            .iter()
+            .map(|anchor| anchor.revision_id.as_str())
+            .collect::<Vec<_>>()
+            .join(",");
+        let _ = writeln!(
+            output,
+            "@@ change {} kind={} source={} page={} revisions={} @@",
+            change.id,
+            document_set_debug_label(change.kind),
+            document_set_debug_label(change.source),
+            change
+                .page_index
+                .map_or_else(|| "-".to_owned(), |page| (page + 1).to_string()),
+            revisions,
+        );
+        let mut wrote_text = false;
+        for comparison in &change.comparisons {
+            let Some(text_diff) = comparison.text_diff.as_ref() else {
+                continue;
+            };
+            wrote_text = true;
+            for hunk in &text_diff.hunks {
+                let _ = writeln!(output, "@@ -{} +{} @@", hunk.before_start, hunk.after_start);
+                for line in &hunk.lines {
+                    let (side, prefix) = match line.kind {
+                        TextDiffLineKind::Context => (
+                            format!(
+                                "{},{}",
+                                comparison.from_revision_id, comparison.to_revision_id
+                            ),
+                            ' ',
+                        ),
+                        TextDiffLineKind::Added => (comparison.to_revision_id.clone(), '+'),
+                        TextDiffLineKind::Removed => (comparison.from_revision_id.clone(), '-'),
+                    };
+                    let _ = writeln!(output, "[{side}] {prefix}{}", render_inline_line(line));
+                }
+            }
+        }
+        if !wrote_text {
+            for anchor in &change.anchors {
+                if let Some(text) = anchor.text.as_deref() {
+                    let marker = match document_set_debug_label(anchor.state).as_str() {
+                        "introduced" => '+',
+                        "removed" => '-',
+                        _ => '~',
+                    };
+                    let _ = writeln!(output, "[{}] {marker}{text}", anchor.revision_id);
+                }
+            }
+        }
+        if let Some(visual) = change.visual.as_ref() {
+            let _ = writeln!(
+                output,
+                "[{}] ~ [visual evidence: {} pixels, {:.4}% of page]",
+                revisions,
+                visual.changed_pixels,
+                visual.changed_ratio * 100.0,
+            );
+        }
+        if !wrote_text
+            && change.anchors.iter().all(|anchor| anchor.text.is_none())
+            && change.visual.is_none()
+        {
+            let _ = writeln!(
+                output,
+                "[{}] ~ [{} change]",
+                revisions,
+                document_set_debug_label(change.source),
+            );
+        }
+    }
+    output
+}
+
+fn document_set_debug_label<T: std::fmt::Debug>(value: T) -> String {
+    format!("{value:?}").to_lowercase()
 }
 
 fn render_inline_diff(result: &PiffResult, before: &Path, after: &Path) -> String {

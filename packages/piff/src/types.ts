@@ -60,6 +60,33 @@ export interface PiffRunOptions {
   onProgress?: (event: PiffProgress) => void
 }
 
+/** Input document for a multi-document comparison. IDs are stable result anchors. */
+export interface PiffDocumentInput {
+  id: string
+  label?: string
+  bytes: Uint8Array
+}
+
+export interface PiffDocumentSetOptions extends PiffOptions {
+  strategy?: PdfDocumentSetStrategy
+}
+
+/** Comparison graph used by a document set. */
+export type PdfDocumentSetStrategy = 'baseline' | 'adjacent'
+
+/** Progress for one edge in a multi-document comparison graph. */
+export interface PiffDocumentSetProgress extends PiffProgress {
+  comparisonIndex: number
+  comparisonTotal: number
+  fromRevisionId: string
+  toRevisionId: string
+}
+
+export interface PiffDocumentSetRunOptions {
+  signal?: AbortSignal
+  onProgress?: (event: PiffDocumentSetProgress) => void
+}
+
 /** Controls memory retained by a PiffSession's lazy preview cache. */
 export interface PiffSessionOptions {
   /** Maximum encoded preview bytes retained. Defaults to 64 MiB. Set to 0 to disable caching. */
@@ -299,6 +326,109 @@ export interface PdfDocumentTextDiff {
   pages: PdfDocumentTextDiffPage[]
   /** Canonical block operations in paired document order. */
   stream: PdfDocumentReviewItem[]
+}
+
+export type PdfChangeSource = 'text' | 'figure' | 'page' | 'visual'
+export type PdfRevisionChangeState =
+  | 'introduced'
+  | 'removed'
+  | 'modified'
+  | 'moved'
+  | 'reflowed'
+  | 'swapped'
+export type PdfDocumentChangeKind = PdfSemanticChangeKind | 'visual' | 'swapped' | 'diverged'
+
+/** One revision-specific anchor in a revision-neutral change operation. */
+export interface PdfRevisionAnchor {
+  id: string
+  revisionId: string
+  source: PdfChangeSource
+  state: PdfRevisionChangeState
+  pageIndex?: number
+  pageStatus?: PdfPageStatus
+  blockId?: string
+  figureId?: string
+  structure?: PdfSemanticTextBlockKind
+  confidence?: number
+  text?: string
+  bounds?: PdfSemanticBounds
+  focusBounds?: PdfSemanticBounds
+}
+
+/** A content variant shared by one or more revisions. */
+export interface PdfRevisionVariant {
+  id: string
+  text?: string
+  revisionIds: string[]
+  anchorIds: string[]
+}
+
+/** Pairwise text detail retained inside a multi-document operation. */
+export interface PdfRevisionComparisonDetail {
+  fromRevisionId: string
+  toRevisionId: string
+  kind: PdfDocumentChangeKind
+  textDiff?: PdfTextDiff
+}
+
+export interface PdfVisualChangeEvidence {
+  changedPixels: number
+  changedRatio: number
+  regions: PiffRegion[]
+}
+
+/** Revision-neutral change primitive for inline and candidate-comparison consumers. */
+export interface PdfChangeOperation {
+  id: string
+  source: PdfChangeSource
+  kind: PdfDocumentChangeKind
+  pageIndex?: number
+  structure?: PdfSemanticTextBlockKind
+  anchors: PdfRevisionAnchor[]
+  variants: PdfRevisionVariant[]
+  comparisons: PdfRevisionComparisonDetail[]
+  visual?: PdfVisualChangeEvidence
+}
+
+export interface PdfDocumentRevision {
+  id: string
+  label: string
+  index: number
+  pageCount?: number
+}
+
+export interface PdfDocumentSetComparison {
+  fromRevisionId: string
+  toRevisionId: string
+  equal: boolean
+  changedPages: number
+  changedLines: number
+  truncated: boolean
+}
+
+export interface PiffDocumentSetStats {
+  loadMs: number
+  fingerprintMs: number
+  matchingMs: number
+  renderMs: number
+  compareMs: number
+  regionMs: number
+  semanticMs: number
+  totalMs: number
+}
+
+/** Result of comparing an ordered set of PDF revisions. */
+export interface PiffDocumentSetResult {
+  schemaVersion: number
+  primitive: 'document-set'
+  engine: PdfEngineInfo
+  equal: boolean
+  strategy: PdfDocumentSetStrategy
+  revisions: PdfDocumentRevision[]
+  comparisons: PdfDocumentSetComparison[]
+  changes: PdfChangeOperation[]
+  truncated: boolean
+  stats: PiffDocumentSetStats
 }
 
 export interface PiffStats {
