@@ -30,6 +30,7 @@ const ALIGNMENT_WARNING_THRESHOLD: f32 = 0.75;
 const ROLE_EDGE_BAND_RATIO: f32 = 0.15;
 const ROLE_MIN_EDGE_BAND: f32 = 24.0;
 const ROLE_MAX_TEXT_LENGTH: usize = 240;
+const MAX_DOCUMENT_SET_REVISIONS: usize = 64;
 
 static PDFIUM: OnceLock<Result<Mutex<Pdfium>, String>> = OnceLock::new();
 
@@ -146,6 +147,20 @@ pub struct ProgressEvent {
     pub phase: ProgressPhase,
     pub completed: usize,
     pub total: usize,
+}
+
+/// Progress for one edge in a multi-document comparison graph.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DocumentSetProgressEvent {
+    pub comparison_index: usize,
+    pub comparison_total: usize,
+    pub event: ProgressEvent,
+}
+
+#[derive(Clone, Copy)]
+struct DocumentSetCallbacks<'a> {
+    progress: Option<&'a dyn Fn(DocumentSetProgressEvent)>,
+    cancellation: Option<&'a CancellationToken>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -885,9 +900,9 @@ pub fn compare_bytes_with_passwords_and_progress(
 /// Compares an ordered set of PDFs and returns revision-neutral change operations.
 ///
 /// The baseline strategy compares revision zero with every later revision. The adjacent
-/// strategy compares each revision with its predecessor. Pair sessions are intentionally kept
-/// as the internal implementation boundary for now; the result shape is independent of that
-/// graph so a shared-document cache can be introduced without changing consumers.
+/// strategy compares each revision with its predecessor. Documents are loaded once when the
+/// password policy allows it, so shared baselines and adjacent intermediate revisions do not
+/// pay the PDFium load cost for every edge.
 pub fn compare_document_set_bytes(
     documents: Vec<PdfDocumentSetInput>,
     library_path: Option<&Path>,
@@ -895,8 +910,109 @@ pub fn compare_document_set_bytes(
     strategy: PdfDocumentSetStrategy,
     passwords: PdfPasswords<'_>,
 ) -> Result<PdfDocumentSetResult, PiffError> {
-    const MAX_DOCUMENT_SET_REVISIONS: usize = 64;
+    compare_document_set_bytes_with_progress(
+        documents,
+        library_path,
+        options,
+        strategy,
+        passwords,
+        None,
+        None,
+    )
+}
+
+/// Compares an ordered set of PDFs with bounded progress and cancellation.
+pub fn compare_document_set_bytes_with_progress(
+    documents: Vec<PdfDocumentSetInput>,
+    library_path: Option<&Path>,
+    options: PiffOptions,
+    strategy: PdfDocumentSetStrategy,
+    passwords: PdfPasswords<'_>,
+    progress: Option<&dyn Fn(DocumentSetProgressEvent)>,
+    cancellation: Option<&CancellationToken>,
+) -> Result<PdfDocumentSetResult, PiffError> {
     validate_options(options)?;
+    ensure_not_cancelled(cancellation)?;
+    let edges = validate_document_set(&documents, strategy, options.limits.max_input_bytes)?;
+    let started = Instant::now();
+    let callbacks = DocumentSetCallbacks {
+        progress,
+        cancellation,
+    };
+    if !document_set_can_share_documents(strategy, passwords) {
+        let pairs = compare_document_set_pairs(
+            &documents,
+            &edges,
+            library_path,
+            options,
+            passwords,
+            callbacks,
+        )?;
+        return Ok(build_document_set_result(
+            &documents, pairs, strategy, started,
+        ));
+    }
+
+    with_pdfium(library_path, |pdfium| {
+        let load_started = Instant::now();
+        let loaded = load_document_set(
+            pdfium,
+            &documents,
+            strategy,
+            passwords,
+            callbacks.cancellation,
+        )?;
+        let load_ms = elapsed_ms(load_started);
+
+        // PDFium can lazily initialize text extraction for protected documents. Keep the
+        // established pair-level retry path for that case instead of sharing a stale handle.
+        if matches!(options.mode, PiffMode::Semantic) && loaded.iter().any(is_encrypted) {
+            drop(loaded);
+            let pairs = compare_document_set_pairs_with_pdfium(
+                pdfium,
+                &documents,
+                &edges,
+                library_path,
+                options,
+                passwords,
+                callbacks,
+            )?;
+            return Ok(build_document_set_result(
+                &documents, pairs, strategy, started,
+            ));
+        }
+
+        report_document_set_progress(
+            callbacks.progress,
+            1,
+            edges.len(),
+            ProgressEvent {
+                phase: ProgressPhase::Loading,
+                completed: 1,
+                total: 1,
+            },
+        );
+
+        let pairs = compare_document_set_loaded_pairs(
+            &documents,
+            &edges,
+            &loaded,
+            library_path,
+            options,
+            load_ms,
+            callbacks,
+        )?;
+        Ok(build_document_set_result(
+            &documents, pairs, strategy, started,
+        ))
+    })
+}
+
+fn validate_document_set(
+    documents: &[PdfDocumentSetInput],
+    strategy: PdfDocumentSetStrategy,
+    max_input_bytes: Option<usize>,
+) -> Result<Vec<(usize, usize)>, PiffError> {
     if documents.len() < 2 {
         return Err(PiffError::InvalidDocumentSet(
             "at least two PDFs are required".to_owned(),
@@ -908,7 +1024,7 @@ pub fn compare_document_set_bytes(
         )));
     }
     let mut ids = HashSet::new();
-    for document in &documents {
+    for document in documents {
         if document.id.trim().is_empty() {
             return Err(PiffError::InvalidDocumentSet(
                 "every PDF must have a non-empty id".to_owned(),
@@ -920,33 +1036,246 @@ pub fn compare_document_set_bytes(
                 document.id
             )));
         }
+        ensure_byte_input_limits(&document.bytes, &[], max_input_bytes)?;
     }
-
-    let edges: Vec<(usize, usize)> = match strategy {
+    Ok(match strategy {
         PdfDocumentSetStrategy::Baseline => (1..documents.len()).map(|index| (0, index)).collect(),
         PdfDocumentSetStrategy::Adjacent => (1..documents.len())
             .map(|index| (index - 1, index))
             .collect(),
-    };
-    let started = Instant::now();
-    let mut pairs = Vec::with_capacity(edges.len());
-    for (from_index, to_index) in edges {
-        let pair_options = PiffOptions {
-            include_previews: false,
-            ..options
-        };
-        let result = compare_bytes_with_passwords_and_progress(
-            documents[from_index].bytes.clone(),
-            documents[to_index].bytes.clone(),
-            library_path,
-            pair_options,
-            passwords,
-            None,
-            None,
-        )?;
-        pairs.push((from_index, to_index, result));
-    }
+    })
+}
 
+fn document_set_can_share_documents(
+    strategy: PdfDocumentSetStrategy,
+    passwords: PdfPasswords<'_>,
+) -> bool {
+    matches!(strategy, PdfDocumentSetStrategy::Baseline) || passwords.before == passwords.after
+}
+
+fn load_document_set<'a>(
+    pdfium: &'a Pdfium,
+    documents: &[PdfDocumentSetInput],
+    strategy: PdfDocumentSetStrategy,
+    passwords: PdfPasswords<'_>,
+    cancellation: Option<&CancellationToken>,
+) -> Result<Vec<PdfDocument<'a>>, PiffError> {
+    documents
+        .iter()
+        .enumerate()
+        .map(|(index, document)| {
+            ensure_not_cancelled(cancellation)?;
+            let password = match strategy {
+                PdfDocumentSetStrategy::Baseline if index == 0 => passwords.before,
+                PdfDocumentSetStrategy::Baseline => passwords.after,
+                PdfDocumentSetStrategy::Adjacent if index == 0 => passwords.before,
+                PdfDocumentSetStrategy::Adjacent => passwords.after,
+            };
+            let side = if index == 0 { "before" } else { "after" };
+            load_pdf_from_bytes(pdfium, document.bytes.clone(), password, side)
+        })
+        .collect()
+}
+
+fn compare_document_set_pairs(
+    documents: &[PdfDocumentSetInput],
+    edges: &[(usize, usize)],
+    library_path: Option<&Path>,
+    options: PiffOptions,
+    passwords: PdfPasswords<'_>,
+    callbacks: DocumentSetCallbacks<'_>,
+) -> Result<Vec<(usize, usize, PiffResult)>, PiffError> {
+    edges
+        .iter()
+        .enumerate()
+        .map(|(edge_index, &(from_index, to_index))| {
+            let pair_options = document_set_pair_options(
+                options,
+                &documents[from_index].bytes,
+                &documents[to_index].bytes,
+            );
+            let edge_progress =
+                document_set_edge_progress(callbacks.progress, edge_index + 1, edges.len());
+            let result = compare_bytes_with_passwords_and_progress(
+                documents[from_index].bytes.clone(),
+                documents[to_index].bytes.clone(),
+                library_path,
+                pair_options,
+                passwords,
+                edge_progress.as_deref(),
+                callbacks.cancellation,
+            )?;
+            Ok((from_index, to_index, result))
+        })
+        .collect()
+}
+
+fn compare_document_set_pairs_with_pdfium(
+    pdfium: &Pdfium,
+    documents: &[PdfDocumentSetInput],
+    edges: &[(usize, usize)],
+    library_path: Option<&Path>,
+    options: PiffOptions,
+    passwords: PdfPasswords<'_>,
+    callbacks: DocumentSetCallbacks<'_>,
+) -> Result<Vec<(usize, usize, PiffResult)>, PiffError> {
+    edges
+        .iter()
+        .enumerate()
+        .map(|(edge_index, &(from_index, to_index))| {
+            let pair_options = document_set_pair_options(
+                options,
+                &documents[from_index].bytes,
+                &documents[to_index].bytes,
+            );
+            let edge_progress =
+                document_set_edge_progress(callbacks.progress, edge_index + 1, edges.len());
+            let started = Instant::now();
+            let load_started = Instant::now();
+            ensure_not_cancelled(callbacks.cancellation)?;
+            let (before, after) = load_pdf_pair_from_byte_slices(
+                pdfium,
+                &documents[from_index].bytes,
+                &documents[to_index].bytes,
+                passwords,
+            )?;
+            let load_ms = elapsed_ms(load_started);
+            let engine = engine_info(library_path);
+            let retry_encrypted = needs_encrypted_semantic_retry(pair_options, &before, &after);
+            let first = compare_documents(
+                &before,
+                &after,
+                pair_options,
+                ComparisonContext {
+                    engine: engine.clone(),
+                    started,
+                    load_ms,
+                    progress: edge_progress.as_deref(),
+                    cancellation: callbacks.cancellation,
+                },
+            )?;
+            if !retry_encrypted {
+                return Ok((from_index, to_index, first));
+            }
+
+            let first_stats = first.stats;
+            drop(first);
+            drop(before);
+            drop(after);
+            let retry_started = Instant::now();
+            ensure_not_cancelled(callbacks.cancellation)?;
+            let (before, after) = load_pdf_pair_from_byte_slices(
+                pdfium,
+                &documents[from_index].bytes,
+                &documents[to_index].bytes,
+                passwords,
+            )?;
+            let retry_load_ms = elapsed_ms(retry_started);
+            let mut result = compare_documents(
+                &before,
+                &after,
+                pair_options,
+                ComparisonContext {
+                    engine,
+                    started,
+                    load_ms: retry_load_ms,
+                    progress: edge_progress.as_deref(),
+                    cancellation: callbacks.cancellation,
+                },
+            )?;
+            add_retry_stats(&mut result, first_stats);
+            Ok((from_index, to_index, result))
+        })
+        .collect()
+}
+
+fn document_set_pair_options(options: PiffOptions, before: &[u8], after: &[u8]) -> PiffOptions {
+    PiffOptions {
+        page_matching: if before == after {
+            PageMatching::Index
+        } else {
+            options.page_matching
+        },
+        include_previews: false,
+        ..options
+    }
+}
+
+fn compare_document_set_loaded_pairs<'a>(
+    documents: &[PdfDocumentSetInput],
+    edges: &[(usize, usize)],
+    loaded: &[PdfDocument<'a>],
+    library_path: Option<&Path>,
+    options: PiffOptions,
+    load_ms: f64,
+    callbacks: DocumentSetCallbacks<'_>,
+) -> Result<Vec<(usize, usize, PiffResult)>, PiffError> {
+    edges
+        .iter()
+        .enumerate()
+        .map(|(edge_index, &(from_index, to_index))| {
+            ensure_not_cancelled(callbacks.cancellation)?;
+            let pair_options = document_set_pair_options(
+                options,
+                &documents[from_index].bytes,
+                &documents[to_index].bytes,
+            );
+            let edge_progress =
+                document_set_edge_progress(callbacks.progress, edge_index + 1, edges.len());
+            let result = compare_documents(
+                &loaded[from_index],
+                &loaded[to_index],
+                pair_options,
+                ComparisonContext {
+                    engine: engine_info(library_path),
+                    started: Instant::now(),
+                    load_ms: if edge_index == 0 { load_ms } else { 0.0 },
+                    progress: edge_progress.as_deref(),
+                    cancellation: callbacks.cancellation,
+                },
+            )?;
+            Ok((from_index, to_index, result))
+        })
+        .collect()
+}
+
+fn document_set_edge_progress<'a>(
+    progress: Option<&'a dyn Fn(DocumentSetProgressEvent)>,
+    comparison_index: usize,
+    comparison_total: usize,
+) -> Option<Box<dyn Fn(ProgressEvent) + 'a>> {
+    progress.map(|callback| {
+        Box::new(move |event| {
+            callback(DocumentSetProgressEvent {
+                comparison_index,
+                comparison_total,
+                event,
+            });
+        }) as Box<dyn Fn(ProgressEvent) + 'a>
+    })
+}
+
+fn report_document_set_progress(
+    progress: Option<&dyn Fn(DocumentSetProgressEvent)>,
+    comparison_index: usize,
+    comparison_total: usize,
+    event: ProgressEvent,
+) {
+    if let Some(progress) = progress {
+        progress(DocumentSetProgressEvent {
+            comparison_index,
+            comparison_total,
+            event,
+        });
+    }
+}
+
+fn build_document_set_result(
+    documents: &[PdfDocumentSetInput],
+    pairs: Vec<(usize, usize, PiffResult)>,
+    strategy: PdfDocumentSetStrategy,
+    started: Instant,
+) -> PdfDocumentSetResult {
     let mut page_counts = vec![None; documents.len()];
     for (from_index, to_index, result) in &pairs {
         page_counts[*from_index] = Some(result.before_page_count);
@@ -983,7 +1312,7 @@ pub fn compare_document_set_bytes(
                 .is_some_and(|text_diff| text_diff.truncated),
         })
         .collect::<Vec<_>>();
-    let changes = build_document_set_changes(&pairs, &documents, &revisions);
+    let changes = build_document_set_changes(&pairs, documents, &revisions);
     let engine = pairs[0].2.engine.clone();
     let stats = pairs.iter().fold(
         PiffStats {
@@ -1010,7 +1339,7 @@ pub fn compare_document_set_bytes(
     );
     let total_ms = elapsed_ms(started).max(stats.total_ms);
     let stats = PiffStats { total_ms, ..stats };
-    Ok(PdfDocumentSetResult {
+    PdfDocumentSetResult {
         schema_version: RESULT_SCHEMA_VERSION,
         primitive: "document-set",
         engine,
@@ -1026,7 +1355,7 @@ pub fn compare_document_set_bytes(
                 .is_some_and(|text_diff| text_diff.truncated)
         }),
         stats,
-    })
+    }
 }
 
 /// Checks equality while stopping after the first changed page.

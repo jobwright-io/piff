@@ -101,7 +101,7 @@ and eviction counters. The README documents the process-level PDFium concurrency
 - Native package staging writes a deterministic artifact manifest with file sizes and SHA-256
   checksums. Release CI verifies the manifest and pinned PDFium build before publication.
 
-### 5. Multi-document change sets — initial implementation
+### 5. Multi-document change sets — native graph path
 
 The next public primitive is `PiffDocumentSet` / `PdfChangeOperation`. It compares an ordered
 revision set with either a shared baseline or adjacent-revision edges, then emits revision-keyed
@@ -114,11 +114,14 @@ pretends that one revision is globally “old” and another is globally “new�
 - Text, figure, inserted/deleted page, and visual-only changes use the same operation shape.
 - Baseline changes shared by multiple candidates are grouped into one operation with one variant per
   distinct revision value; candidate-only additions remain anchored only to their candidate.
+- The native Node/Bun and CLI path loads each revision once when its password policy permits shared
+  handles. Progress and cancellation still apply per graph edge.
 
-The current implementation evaluates the comparison graph through pair sessions. A later
-optimization can share document loading, fingerprints, and semantic extraction across edges
-without changing this result model. An all-pairs strategy and cross-candidate page alignment are
-also deliberately deferred until real workloads require them.
+Page fingerprints and semantic extraction remain edge-local. A later cache can share those derived
+artifacts without changing this result model. The browser/WASM fallback still evaluates edges
+through pair calls. Separate adjacent passwords and protected semantic PDFs use the established
+pair-level fallback so password and PDFium retry behavior stays correct. An all-pairs strategy and
+cross-candidate page alignment are also deliberately deferred until real workloads require them.
 
 ## Deliberate non-goals
 

@@ -10,16 +10,28 @@ use napi::threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode};
 use napi_derive::napi;
 use piff_core::DiffOptions;
 use piff_pdfium::{
-    compare_bytes_with_passwords_and_progress, is_equal_bytes_with_passwords_and_progress,
-    render_page_diff_png_with_timing, CancellationToken, PageMatching, PdfPasswords,
-    PdfRenderRequest, PdfResourceLimits, PiffMode, PiffOptions, PiffResult, PreviewView,
-    ProgressEvent, ProgressPhase, RenderMode, RenderedPagePreview,
+    compare_bytes_with_passwords_and_progress, compare_document_set_bytes_with_progress,
+    is_equal_bytes_with_passwords_and_progress, render_page_diff_png_with_timing,
+    CancellationToken, DocumentSetProgressEvent, PageMatching, PdfDocumentSetInput,
+    PdfDocumentSetStrategy, PdfPasswords, PdfRenderRequest, PdfResourceLimits, PiffMode,
+    PiffOptions, PiffResult, PreviewView, ProgressEvent, ProgressPhase, RenderMode,
+    RenderedPagePreview,
 };
 use piff_semantic::TextReadingOrder;
 
 type ProgressPayload = (String, u32, u32);
 type ProgressCallback =
     ThreadsafeFunction<ProgressPayload, Unknown<'static>, ProgressPayload, Status, false, false, 0>;
+type DocumentSetProgressPayload = (String, u32, u32, u32, u32);
+type DocumentSetProgressCallback = ThreadsafeFunction<
+    DocumentSetProgressPayload,
+    Unknown<'static>,
+    DocumentSetProgressPayload,
+    Status,
+    false,
+    false,
+    0,
+>;
 type ProgressJsFunction = Function<'static, Unknown<'static>, Unknown<'static>>;
 
 static CANCELLATION_TOKENS: OnceLock<Mutex<HashMap<u32, CancellationToken>>> = OnceLock::new();
@@ -59,6 +71,13 @@ pub struct DiffOptionsJs {
     pub limits: Option<ResourceLimitsJs>,
 }
 
+#[napi(object)]
+pub struct DocumentSetInputJs {
+    pub id: String,
+    pub label: Option<String>,
+    pub bytes: Buffer,
+}
+
 #[derive(Debug, Default)]
 struct PasswordsOwned {
     before: Option<String>,
@@ -82,6 +101,46 @@ pub struct DiffTask {
     library_path: Option<PathBuf>,
     progress: Option<ProgressCallback>,
     cancellation: Option<CancellationToken>,
+}
+
+pub struct DocumentSetTask {
+    documents: Vec<PdfDocumentSetInput>,
+    strategy: PdfDocumentSetStrategy,
+    options: PiffOptions,
+    passwords: PasswordsOwned,
+    library_path: Option<PathBuf>,
+    progress: Option<DocumentSetProgressCallback>,
+    cancellation: Option<CancellationToken>,
+}
+
+impl Task for DocumentSetTask {
+    type Output = piff_pdfium::PdfDocumentSetResult;
+    type JsValue = String;
+
+    fn compute(&mut self) -> napi::Result<Self::Output> {
+        let documents = std::mem::take(&mut self.documents);
+        let library_path = self.library_path.as_deref();
+        let progress = self.progress.as_ref().map(document_set_progress_callback);
+        catch_unwind(AssertUnwindSafe(|| {
+            compare_document_set_bytes_with_progress(
+                documents,
+                library_path,
+                self.options,
+                self.strategy,
+                self.passwords.as_refs(),
+                progress.as_deref(),
+                self.cancellation.as_ref(),
+            )
+            .map_err(|error| Error::from_reason(error.to_string()))
+        }))
+        .map_err(|payload| Error::from_reason(panic_message(payload)))?
+    }
+
+    fn resolve(&mut self, _env: Env, output: Self::Output) -> napi::Result<Self::JsValue> {
+        serde_json::to_string(&output).map_err(|error| {
+            Error::from_reason(format!("could not serialize document-set result: {error}"))
+        })
+    }
 }
 
 impl Task for DiffTask {
@@ -282,6 +341,41 @@ pub fn piff(
     ))
 }
 
+/// Starts an off-thread comparison of an ordered PDF revision set.
+#[napi]
+pub fn compare_document_set(
+    documents: Vec<DocumentSetInputJs>,
+    strategy: String,
+    options: Option<DiffOptionsJs>,
+    progress: Option<ProgressJsFunction>,
+    signal: Option<AbortSignal>,
+    cancellation_token: Option<u32>,
+) -> napi::Result<AsyncTask<DocumentSetTask>> {
+    let cancellation = cancellation_for(cancellation_token)?;
+    let (options, passwords) = split_options(options)?;
+    let strategy = document_set_strategy(&strategy)?;
+    let documents = documents
+        .into_iter()
+        .map(|document| PdfDocumentSetInput {
+            id: document.id,
+            label: document.label.unwrap_or_default(),
+            bytes: document.bytes.to_vec(),
+        })
+        .collect();
+    Ok(AsyncTask::with_optional_signal(
+        DocumentSetTask {
+            documents,
+            strategy,
+            options,
+            passwords,
+            library_path: env::var_os("PDFIUM_LIBRARY_PATH").map(PathBuf::from),
+            progress: document_set_progress_callback_from_js(progress)?,
+            cancellation,
+        },
+        signal,
+    ))
+}
+
 /// Starts an off-thread equality check that stops after the first changed page.
 #[napi]
 pub fn is_equal(
@@ -412,6 +506,16 @@ fn preview_view(value: Option<&str>) -> napi::Result<PreviewView> {
     }
 }
 
+fn document_set_strategy(value: &str) -> napi::Result<PdfDocumentSetStrategy> {
+    match value {
+        "baseline" => Ok(PdfDocumentSetStrategy::Baseline),
+        "adjacent" => Ok(PdfDocumentSetStrategy::Adjacent),
+        _ => Err(Error::from_reason(format!(
+            "strategy must be \"baseline\" or \"adjacent\", got \"{value}\""
+        ))),
+    }
+}
+
 fn cancellation_for(token_id: Option<u32>) -> napi::Result<Option<CancellationToken>> {
     let Some(token_id) = token_id else {
         return Ok(None);
@@ -439,12 +543,39 @@ fn progress_callback_from_js(
         .transpose()
 }
 
+fn document_set_progress_callback_from_js(
+    callback: Option<ProgressJsFunction>,
+) -> napi::Result<Option<DocumentSetProgressCallback>> {
+    callback
+        .map(|callback| {
+            callback
+                .build_threadsafe_function::<DocumentSetProgressPayload>()
+                .build_callback(|context| Ok(context.value))
+        })
+        .transpose()
+}
+
 fn progress_callback(callback: &ProgressCallback) -> Box<dyn Fn(ProgressEvent) + '_> {
     Box::new(move |event| {
         let payload = (
             progress_phase(event.phase).to_owned(),
             event.completed.min(u32::MAX as usize) as u32,
             event.total.min(u32::MAX as usize) as u32,
+        );
+        let _ = callback.call(payload, ThreadsafeFunctionCallMode::NonBlocking);
+    })
+}
+
+fn document_set_progress_callback(
+    callback: &DocumentSetProgressCallback,
+) -> Box<dyn Fn(DocumentSetProgressEvent) + '_> {
+    Box::new(move |event| {
+        let payload = (
+            progress_phase(event.event.phase).to_owned(),
+            event.event.completed.min(u32::MAX as usize) as u32,
+            event.event.total.min(u32::MAX as usize) as u32,
+            event.comparison_index.min(u32::MAX as usize) as u32,
+            event.comparison_total.min(u32::MAX as usize) as u32,
         );
         let _ = callback.call(payload, ThreadsafeFunctionCallMode::NonBlocking);
     })

@@ -18,7 +18,7 @@ process.env.PDFIUM_LIBRARY_PATH = resolve(
   process.env.PDFIUM_LIBRARY_PATH ?? join(projectRoot, 'artifacts/pdfium/linux-x64/lib/libpdfium.so'),
 )
 
-const { PiffError, PiffSession, piff } = await import('../packages/piff/dist/index.js')
+const { PiffError, PiffSession, piff, piffSet } = await import('../packages/piff/dist/index.js')
 const binary = process.env.PIFF_BIN ?? join(projectRoot, 'target/debug/piff')
 const temporaryDirectory = await mkdtemp(join(tmpdir(), 'piff-hostile-'))
 const semanticOptions = { dpi: 72, mode: 'semantic', pageMatching: 'index' }
@@ -54,6 +54,14 @@ async function verifySdkErrorBoundaries() {
     'pdfium',
   )
   assert.deepEqual(malformedSecond, malformedFirst)
+  await expectPiffError(
+    'sdk-document-set-malformed-input',
+    () => piffSet([
+      { id: 'stable', bytes: stablePdf },
+      { id: 'malformed', bytes: malformed },
+    ], semanticOptions),
+    'pdfium',
+  )
 
   await expectPiffError(
     'sdk-input-limit',
@@ -135,6 +143,14 @@ async function verifyProgressAndCancellation() {
     await expectPiffError(
       'sdk-pre-cancelled-preview',
       () => preCancelledSession.renderPageDiff(0, { signal: preCancelled.signal }),
+      'cancelled',
+    )
+    await expectPiffError(
+      'sdk-document-set-pre-cancelled',
+      () => piffSet([
+        { id: 'stable', bytes: stablePdf },
+        { id: 'stable-copy', bytes: stablePdf },
+      ], semanticOptions, { signal: preCancelled.signal }),
       'cancelled',
     )
   } finally {

@@ -5,15 +5,23 @@ import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import type {
+  PiffDocumentInput,
+  PiffDocumentSetProgress,
+  PiffDocumentSetRunOptions,
   PiffOptions,
   PiffProgressPhase,
   PiffRunOptions,
   PdfPagePreviewView,
+  PdfDocumentSetStrategy,
   PdfReadingOrder,
 } from './types.js'
 
 type NativeProgressCallback = (
   payload: [string, number, number],
+) => void
+
+type NativeDocumentSetProgressCallback = (
+  payload: [string, number, number, number, number],
 ) => void
 
 interface NativeDiffOptions {
@@ -44,6 +52,14 @@ interface NativeBinding {
     after: Buffer,
     options?: NativeDiffOptions,
     progress?: NativeProgressCallback,
+    signal?: AbortSignal,
+    cancellationToken?: number,
+  ): Promise<string>
+  compareDocumentSet?(
+    documents: Array<{ id: string; label?: string; bytes: Buffer }>,
+    strategy: PdfDocumentSetStrategy,
+    options?: NativeDiffOptions,
+    progress?: NativeDocumentSetProgressCallback,
     signal?: AbortSignal,
     cancellationToken?: number,
   ): Promise<string>
@@ -212,6 +228,39 @@ export function toNativeProgress(
       return
     }
     options.onProgress?.({ phase, completed, total })
+  }
+}
+
+export function toNativeDocumentSetProgress(
+  options: PiffDocumentSetRunOptions | undefined,
+  documents: readonly PiffDocumentInput[],
+  strategy: PdfDocumentSetStrategy,
+): NativeDocumentSetProgressCallback | undefined {
+  if (options?.onProgress === undefined) {
+    return undefined
+  }
+  const edges = strategy === 'adjacent'
+    ? documents.slice(1).map((document, index) => [documents[index]?.id, document.id] as const)
+    : documents.slice(1).map((document) => [documents[0]?.id, document.id] as const)
+  return (payload) => {
+    const [phase, completed, total, comparisonIndex, comparisonTotal] = payload
+    if (!isProgressPhase(phase)) {
+      return
+    }
+    const edge = edges[comparisonIndex - 1]
+    if (edge === undefined || comparisonTotal !== edges.length) {
+      return
+    }
+    const event: PiffDocumentSetProgress = {
+      phase,
+      completed,
+      total,
+      comparisonIndex,
+      comparisonTotal,
+      fromRevisionId: edge[0] ?? '',
+      toRevisionId: edge[1],
+    }
+    options.onProgress?.(event)
   }
 }
 

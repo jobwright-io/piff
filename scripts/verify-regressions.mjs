@@ -693,9 +693,19 @@ const adjacentSet = await PiffDocumentSet.open([
   { id: 'baseline', bytes: baselineDocument },
   { id: 'candidate-a', bytes: candidateADocument },
   { id: 'candidate-b', bytes: candidateBDocument },
-], { mode: 'semantic', render: 'none', strategy: 'adjacent' })
+], {
+  mode: 'semantic',
+  render: 'none',
+  pageMatching: 'sequence',
+  strategy: 'adjacent',
+})
 try {
-  const adjacentResult = await adjacentSet.compare()
+  const progressEvents = []
+  const adjacentResult = await adjacentSet.compare({
+    onProgress(event) {
+      progressEvents.push(event)
+    },
+  })
   assert.deepEqual(adjacentResult.comparisons.map((comparison) => [
     comparison.fromRevisionId,
     comparison.toRevisionId,
@@ -703,6 +713,15 @@ try {
     ['baseline', 'candidate-a'],
     ['candidate-a', 'candidate-b'],
   ])
+  assert.ok(progressEvents.some((event) => event.phase === 'loading'))
+  assert.ok(progressEvents.some((event) => event.phase === 'fingerprinting'))
+  assert.ok(progressEvents.some((event) => event.phase === 'comparing'))
+  assert.ok(progressEvents.every((event) => event.comparisonTotal === 2))
+  assert.ok(progressEvents.some((event) => (
+    event.fromRevisionId === 'candidate-a'
+    && event.toRevisionId === 'candidate-b'
+    && event.comparisonIndex === 2
+  )))
   const setPreview = await adjacentSet.renderPageDiff('baseline', 'candidate-a', 0)
   assert.ok(setPreview.byteLength > 8)
 } finally {

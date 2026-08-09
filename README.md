@@ -117,8 +117,13 @@ for (const change of result.changes) {
 content `variants`, and optional pair-specific hunks in `comparisons`. A baseline block changed
 differently by two candidates is one operation with three revision anchors and three content
 variants; a candidate-only block has one `introduced` anchor. Figure, page, and visual-only changes
-use the same shape. `PiffDocumentSet` retains pair sessions so a page preview can be requested
-lazily with `renderPageDiff(fromRevisionId, toRevisionId, pageIndex)`.
+use the same shape. `PiffDocumentSet` creates pair sessions on demand so a page preview can be
+requested lazily with `renderPageDiff(fromRevisionId, toRevisionId, pageIndex)`.
+
+In Node and Bun, the native document-set path loads each revision once when the password policy
+allows the handles to be shared. That avoids reparsing a baseline for every candidate and keeps
+adjacent intermediate revisions alive across their two edges. The browser/WASM fallback keeps the
+same result and preview API, but evaluates its edges through the existing pair calls.
 
 The result is compact and serializable. `semantic.blocks` and `textDiff.pages[].blocks` are the
 canonical page-aware review units. `textDiff.stream` is the flattened document-order projection

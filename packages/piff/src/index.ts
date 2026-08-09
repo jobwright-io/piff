@@ -2,6 +2,7 @@ import {
   asBuffer,
   loadNativeBinding,
   runWithNativeCancellation,
+  toNativeDocumentSetProgress,
   toNativeProgress,
   toNativeOptions,
 } from './native.js'
@@ -275,6 +276,90 @@ interface NativeEngineInfo {
   binding: string
   pdfium_api?: string | null
   pdfium_version?: string | null
+}
+
+interface NativeDocumentSetResult {
+  schema_version: number
+  primitive: 'document-set'
+  engine: NativeEngineInfo
+  equal: boolean
+  strategy: PdfDocumentSetStrategy
+  revisions: Array<{
+    id: string
+    label: string
+    index: number
+    page_count?: number | null
+  }>
+  comparisons: Array<{
+    from_revision_id: string
+    to_revision_id: string
+    equal: boolean
+    changed_pages: number
+    changed_lines: number
+    truncated: boolean
+  }>
+  changes: Array<{
+    id: string
+    source: PdfChangeSource
+    kind: PdfDocumentChangeKind
+    page_index?: number | null
+    structure?: PdfSemanticTextBlockKind | null
+    anchors: Array<{
+      id: string
+      revision_id: string
+      source: PdfChangeSource
+      state: PdfRevisionChangeState
+      page_index?: number | null
+      page_status?: PiffResult['pages'][number]['status'] | null
+      block_id?: string | null
+      figure_id?: string | null
+      structure?: PdfSemanticTextBlockKind | null
+      confidence?: number | null
+      text?: string | null
+      bounds?: {
+        x: number
+        y: number
+        width: number
+        height: number
+      } | null
+      focus_bounds?: {
+        x: number
+        y: number
+        width: number
+        height: number
+      } | null
+    }>
+    variants: Array<{
+      id: string
+      text?: string | null
+      revision_ids: string[]
+      anchor_ids: string[]
+    }>
+    comparisons: Array<{
+      from_revision_id: string
+      to_revision_id: string
+      kind: PdfDocumentChangeKind
+      text_diff?: RawTextDiff | null
+    }>
+    visual?: {
+      changed_pixels: number
+      changed_ratio: number
+      regions: Array<{
+        id: string
+        bounds: {
+          x: number
+          y: number
+          width: number
+          height: number
+        }
+        changed_pixels: number
+        before_content_pixels?: number
+        after_content_pixels?: number
+      }>
+    } | null
+  }>
+  truncated: boolean
+  stats: NativeResult['stats']
 }
 
 type PreviewCacheEntry = {
@@ -597,6 +682,15 @@ export class PiffDocumentSet {
   private async compareSet(
     runOptions?: PiffDocumentSetRunOptions,
   ): Promise<PiffDocumentSetResult> {
+    const native = loadNativeBinding()
+    if (native.compareDocumentSet !== undefined) {
+      return compareNativeDocumentSet(
+        this.documents,
+        this.strategy,
+        this.options,
+        runOptions,
+      )
+    }
     const edges = this.edges()
     const started = nowMs()
     const pairs: DocumentSetPair[] = []
@@ -1166,6 +1260,33 @@ async function compareNative(
   return mapResult(JSON.parse(raw) as NativeResult)
 }
 
+async function compareNativeDocumentSet(
+  documents: readonly PiffDocumentInput[],
+  strategy: PdfDocumentSetStrategy,
+  options: PiffOptions,
+  runOptions?: PiffDocumentSetRunOptions,
+): Promise<PiffDocumentSetResult> {
+  const native = loadNativeBinding()
+  if (native.compareDocumentSet === undefined) {
+    throw new PiffError('native-module', 'The native module does not support document sets')
+  }
+  const raw = await runWithNativeCancellation(runOptions?.signal, (cancellationToken) =>
+    native.compareDocumentSet?.(
+      documents.map((document) => ({
+        id: document.id,
+        label: document.label,
+        bytes: asBuffer(document.bytes),
+      })),
+      strategy,
+      toNativeOptions(options),
+      toNativeDocumentSetProgress(runOptions, documents, strategy),
+      runOptions?.signal,
+      cancellationToken,
+    ) ?? Promise.reject(new Error('native document-set comparison is unavailable')),
+  )
+  return mapDocumentSetResult(JSON.parse(raw) as NativeDocumentSetResult)
+}
+
 function mapResult(raw: NativeResult): PiffResult {
   return {
     schemaVersion: raw.schema_version,
@@ -1202,6 +1323,90 @@ function mapResult(raw: NativeResult): PiffResult {
       semantic: page.semantic == null ? undefined : mapSemantic(page.semantic),
     })),
     textDiff: raw.text_diff == null ? undefined : mapDocumentTextDiff(raw.text_diff),
+    stats: {
+      loadMs: raw.stats.load_ms,
+      fingerprintMs: raw.stats.fingerprint_ms,
+      matchingMs: raw.stats.matching_ms,
+      renderMs: raw.stats.render_ms,
+      compareMs: raw.stats.compare_ms,
+      regionMs: raw.stats.region_ms,
+      semanticMs: raw.stats.semantic_ms,
+      totalMs: raw.stats.total_ms,
+    },
+  }
+}
+
+function mapDocumentSetResult(raw: NativeDocumentSetResult): PiffDocumentSetResult {
+  return {
+    schemaVersion: raw.schema_version,
+    primitive: raw.primitive,
+    engine: mapEngine(raw.engine),
+    equal: raw.equal,
+    strategy: raw.strategy,
+    revisions: raw.revisions.map((revision) => ({
+      id: revision.id,
+      label: revision.label,
+      index: revision.index,
+      pageCount: revision.page_count ?? undefined,
+    })),
+    comparisons: raw.comparisons.map((comparison) => ({
+      fromRevisionId: comparison.from_revision_id,
+      toRevisionId: comparison.to_revision_id,
+      equal: comparison.equal,
+      changedPages: comparison.changed_pages,
+      changedLines: comparison.changed_lines,
+      truncated: comparison.truncated,
+    })),
+    changes: raw.changes.map((change) => ({
+      id: change.id,
+      source: change.source,
+      kind: change.kind,
+      pageIndex: change.page_index ?? undefined,
+      structure: change.structure ?? undefined,
+      anchors: change.anchors.map((anchor) => ({
+        id: anchor.id,
+        revisionId: anchor.revision_id,
+        source: anchor.source,
+        state: anchor.state,
+        pageIndex: anchor.page_index ?? undefined,
+        pageStatus: anchor.page_status ?? undefined,
+        blockId: anchor.block_id ?? undefined,
+        figureId: anchor.figure_id ?? undefined,
+        structure: anchor.structure ?? undefined,
+        confidence: anchor.confidence ?? undefined,
+        text: anchor.text ?? undefined,
+        bounds: anchor.bounds ?? undefined,
+        focusBounds: anchor.focus_bounds ?? undefined,
+      })),
+      variants: change.variants.map((variant) => ({
+        id: variant.id,
+        text: variant.text ?? undefined,
+        revisionIds: variant.revision_ids,
+        anchorIds: variant.anchor_ids,
+      })),
+      comparisons: change.comparisons.map((comparison) => ({
+        fromRevisionId: comparison.from_revision_id,
+        toRevisionId: comparison.to_revision_id,
+        kind: comparison.kind,
+        textDiff: comparison.text_diff == null
+          ? undefined
+          : mapTextDiff(comparison.text_diff),
+      })),
+      visual: change.visual == null
+        ? undefined
+        : {
+            changedPixels: change.visual.changed_pixels,
+            changedRatio: change.visual.changed_ratio,
+            regions: change.visual.regions.map((region) => ({
+              id: region.id,
+              bounds: region.bounds,
+              changedPixels: region.changed_pixels,
+              beforeContentPixels: region.before_content_pixels,
+              afterContentPixels: region.after_content_pixels,
+            })),
+          },
+    })),
+    truncated: raw.truncated,
     stats: {
       loadMs: raw.stats.load_ms,
       fingerprintMs: raw.stats.fingerprint_ms,
@@ -1376,6 +1581,8 @@ function toPiffError(error: unknown): PiffError {
     ? 'native-module'
     : normalized.includes('cancel') || normalized.includes('aborted')
       ? 'cancelled'
+      : normalized.includes('invalid document set')
+        ? 'invalid-options'
       : normalized.includes('exceeding the') && normalized.includes('input limit')
         ? 'input-too-large'
         : normalized.includes('page limit')
