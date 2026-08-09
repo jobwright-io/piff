@@ -67,10 +67,16 @@ Acceptance criteria:
 The regression harness now covers page structure, figure changes, malformed input, encrypted
 input, resource limits, deterministic output, cancellation boundaries, and bounded-cache eviction.
 It records engine and runtime metadata and checks that phase timings remain finite and
-non-negative. Fuzz targets now exercise semantic normalization and the PDFium loading boundary.
+non-negative. The optional golden runner now checks pinned real PDFs for forms, images, annotations,
+fonts, scans, columns, encryption, and page matching. Fuzz targets exercise semantic normalization
+and the PDFium loading boundary.
 
-- Golden fixtures for columns, tables, forms, repeated headers, ligatures, missing fonts, scans,
-  malformed objects, encrypted files, and figure changes.
+The encrypted golden fixture currently reports a one-time `warmupChanged` result during PDFium
+initialization. Repeated comparisons after that pass are stable, but the first-pass difference is
+still a renderer reliability issue.
+
+- Add golden fixtures for tables, repeated headers, malformed objects, ligatures, and figure
+  changes that do not depend on external reference checkouts.
 - Verify cancellation, memory limits, and deterministic output under hostile inputs.
 - Run sustained fuzz campaigns against the checked-in targets and promote minimized failures into
   the golden corpus.

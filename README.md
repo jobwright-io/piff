@@ -155,6 +155,7 @@ pnpm typecheck
 pnpm build
 pnpm verify:regressions
 pnpm verify:cli
+pnpm verify:golden
 pnpm verify:fuzz
 pnpm benchmark -- --json
 ```
@@ -164,6 +165,8 @@ page insertion, deletion and movement, translation, figures, repeated headers an
 and table blocks, malformed inputs, encrypted inputs, deterministic output, and resource limits.
 The fuzz targets under `fuzz/` cover semantic normalization and the PDFium loading boundary; the
 PDF loading target requires `PDFIUM_LIBRARY_PATH` and should run in an isolated process.
+The optional golden corpus under `fixtures/golden/` checks real PDFs from pinned reference
+checkouts. Set `PIFF_GOLDEN_REQUIRED=1` when a missing or changed fixture should fail the command.
 
 ## Release deployment
 
