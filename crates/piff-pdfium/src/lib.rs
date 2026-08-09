@@ -628,7 +628,7 @@ pub fn compare_bytes_with_passwords_and_progress(
             options,
             started,
             load_ms,
-            None,
+            progress,
             cancellation,
         )?;
         if !retry_encrypted {
@@ -743,7 +743,7 @@ pub fn is_equal_bytes_with_passwords_and_progress(
             },
         );
         let retry_encrypted = needs_encrypted_semantic_retry(options, &before, &after);
-        let first = is_equal_loaded_documents(&before, &after, options, None, cancellation)?;
+        let first = is_equal_loaded_documents(&before, &after, options, progress, cancellation)?;
         if !retry_encrypted {
             return Ok(first);
         }

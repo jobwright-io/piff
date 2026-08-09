@@ -156,6 +156,7 @@ pnpm build
 pnpm verify:regressions
 pnpm verify:cli
 pnpm verify:golden
+pnpm verify:hostile
 pnpm verify:fuzz
 pnpm benchmark -- --json
 ```
@@ -166,6 +167,8 @@ and table blocks, malformed inputs, encrypted inputs, deterministic output, and 
 `pnpm verify:golden` always runs a generated local golden manifest for table rows, repeated roles,
 figure swaps, ligature text encoding, malformed input classification, repeatability, and preview
 caching. It can additionally check the pinned external corpus under `references/`.
+`pnpm verify:hostile` exercises SDK progress and cancellation at each pipeline phase, resource
+limits, malformed-input error stability, fresh-process determinism, and equivalent CLI failures.
 The fuzz targets under `fuzz/` cover semantic normalization and the PDFium loading boundary; the
 PDF loading target requires `PDFIUM_LIBRARY_PATH` and should run in an isolated process.
 The optional golden corpus under `fixtures/golden/` checks real PDFs from pinned reference

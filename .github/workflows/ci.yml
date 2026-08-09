@@ -81,3 +81,46 @@ jobs:
 
       - name: Build packages
         run: pnpm build
+
+  native-reliability:
+    name: Native hostile-input checks
+    runs-on: ubuntu-24.04
+    env:
+      PDFIUM_RELEASE_TAG: '7881'
+      PIFF_NATIVE_MODULE: artifacts/piff.linux-x64-gnu.node
+      PDFIUM_LIBRARY_PATH: artifacts/pdfium/linux-x64/lib/libpdfium.so
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.9.0
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build TypeScript SDK
+        run: pnpm build:core
+
+      - name: Build native SDK binding
+        run: cargo build --locked --package piff-napi --release
+
+      - name: Download pinned PDFium
+        run: node scripts/download-pdfium.mjs --target linux-x64-gnu --tag "$PDFIUM_RELEASE_TAG" --output artifacts/pdfium
+
+      - name: Stage native SDK binding
+        run: node scripts/copy-native-module.mjs --target-dir target/release --output "$PIFF_NATIVE_MODULE"
+
+      - name: Run hostile-input checks
+        run: pnpm verify:hostile

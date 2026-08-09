@@ -13,6 +13,7 @@
     "verify:cli": "cargo build --locked -p piff && node scripts/verify-cli.mjs",
     "verify:regressions": "node scripts/verify-regressions.mjs",
     "verify:golden": "node scripts/verify-golden.mjs",
+    "verify:hostile": "cargo build --locked -p piff && node scripts/verify-hostile.mjs",
     "verify:fuzz": "cargo check --manifest-path fuzz/Cargo.toml --locked",
     "benchmark": "node scripts/benchmark.mjs",
     "stage:native": "node scripts/stage-native-package.mjs",

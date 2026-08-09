@@ -1,6 +1,5 @@
 import {
   asBuffer,
-  createAbortError,
   loadNativeBinding,
   runWithNativeCancellation,
   toNativeProgress,
@@ -722,7 +721,7 @@ function throwIfAborted(signal: AbortSignal | undefined): void {
   if (signal?.aborted !== true) {
     return
   }
-  throw createAbortError()
+  throw new PiffError('cancelled', 'PDF comparison aborted')
 }
 
 export type {
