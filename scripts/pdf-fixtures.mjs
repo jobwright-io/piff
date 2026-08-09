@@ -87,7 +87,7 @@ function renderRectangle(rectangle, offsetX, offsetY) {
   ].join('\n')
 }
 
-function serializePdf(objects) {
+export function serializePdf(objects) {
   const header = '%PDF-1.4\n%\xE2\xE3\xCF\xD3\n'
   let output = header
   const offsets = [0]

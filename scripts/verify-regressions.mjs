@@ -243,7 +243,8 @@ for (const fixture of cases) {
 
 const report = []
 let reportEngine
-await import('./figure-scenarios.mjs')
+const { writeFigureScenarios } = await import('./figure-scenarios.mjs')
+await writeFigureScenarios()
 const figureScenarioDirectory = join(projectRoot, 'artifacts/figure-scenarios')
 const figureCases = [
   {

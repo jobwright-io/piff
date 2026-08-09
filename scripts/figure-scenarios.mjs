@@ -5,7 +5,7 @@
  * can be inspected as visual evidence rather than accidentally becoming a text test.
  */
 import { mkdir, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const projectRoot = fileURLToPath(new URL('..', import.meta.url))
@@ -15,8 +15,6 @@ const PAGE_WIDTH = 612
 const PAGE_HEIGHT = 792
 const FIGURE_WIDTH = 260
 const FIGURE_HEIGHT = 160
-
-await mkdir(outputDir, { recursive: true })
 
 const cases = {
   'figure-edit': [
@@ -93,15 +91,32 @@ const cases = {
   ],
 }
 
-const manifest = {}
-for (const [name, [before, after]] of Object.entries(cases)) {
-  const beforePath = join(outputDir, `${name}-before.pdf`)
-  const afterPath = join(outputDir, `${name}-after.pdf`)
-  await writeFile(beforePath, createPdf(before))
-  await writeFile(afterPath, createPdf(after))
-  manifest[name] = { before: beforePath, after: afterPath }
+export function createFigureScenario(name) {
+  const definition = cases[name]
+  if (definition === undefined) {
+    throw new Error(`unknown figure scenario: ${name}`)
+  }
+  const [before, after] = definition
+  return { before: createPdf(before), after: createPdf(after) }
 }
-await writeFile(join(outputDir, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`)
+
+export async function writeFigureScenarios() {
+  await mkdir(outputDir, { recursive: true })
+  const manifest = {}
+  for (const name of Object.keys(cases)) {
+    const { before, after } = createFigureScenario(name)
+    const beforePath = join(outputDir, `${name}-before.pdf`)
+    const afterPath = join(outputDir, `${name}-after.pdf`)
+    await writeFile(beforePath, before)
+    await writeFile(afterPath, after)
+    manifest[name] = { before: beforePath, after: afterPath }
+  }
+  await writeFile(join(outputDir, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`)
+}
+
+if (process.argv[1] !== undefined && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url))) {
+  await writeFigureScenarios()
+}
 
 function page({ title, image, images, imageX = 72, imageY = 420 }) {
   return {

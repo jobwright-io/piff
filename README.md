@@ -163,6 +163,9 @@ pnpm benchmark -- --json
 The regression suite uses ordinary PDF bytes and covers wording changes, additions and removals,
 page insertion, deletion and movement, translation, figures, repeated headers and footers, list
 and table blocks, malformed inputs, encrypted inputs, deterministic output, and resource limits.
+`pnpm verify:golden` always runs a generated local golden manifest for table rows, repeated roles,
+figure swaps, ligature text encoding, malformed input classification, repeatability, and preview
+caching. It can additionally check the pinned external corpus under `references/`.
 The fuzz targets under `fuzz/` cover semantic normalization and the PDFium loading boundary; the
 PDF loading target requires `PDFIUM_LIBRARY_PATH` and should run in an isolated process.
 The optional golden corpus under `fixtures/golden/` checks real PDFs from pinned reference

@@ -1,0 +1,79 @@
+{
+  "schemaVersion": 1,
+  "fixtures": [
+    {
+      "id": "local-table-row-change",
+      "generator": "table-row-change",
+      "beforeSha256": "b1d4299e00573700f100c388b1e9e10a5e1ec98140c13bd2c20833cdced54c0c",
+      "afterSha256": "c404f8541a11e3bb0b5ebd8a4c77b10eaf4b983d83b3fbcb22ef10da201df43c",
+      "options": { "mode": "semantic", "pageMatching": "index", "readingOrder": "auto" },
+      "expect": {
+        "beforePages": 1,
+        "afterPages": 1,
+        "equal": false,
+        "semanticQuality": "text",
+        "statusCounts": { "modified": 1 },
+        "requiredStructures": ["table-row"],
+        "requiredBlockKinds": ["modified"],
+        "requiredText": ["| Rust | Expert |", "| Rust | Advanced |"],
+        "preview": true
+      }
+    },
+    {
+      "id": "local-repeated-header-change",
+      "generator": "repeated-header-change",
+      "beforeSha256": "08e62ee7ce3ebbe5af1fe9669a1f8d4359b204e272b4091633080222c8411343",
+      "afterSha256": "205c6578d9e2741831ee2e4be1d48068e08a82047c37e1714e4bc35a1230f12e",
+      "options": { "mode": "semantic", "pageMatching": "index", "readingOrder": "auto" },
+      "expect": {
+        "beforePages": 2,
+        "afterPages": 2,
+        "equal": false,
+        "semanticQuality": "text",
+        "statusCounts": { "modified": 2 },
+        "requiredRoles": ["header", "footer"],
+        "requiredBlockKinds": ["modified"],
+        "requiredText": ["Quarterly Business Report", "Quarterly Business Summary"]
+      }
+    },
+    {
+      "id": "local-figure-swap",
+      "generator": "figure-swap",
+      "beforeSha256": "0ff6ed58cc0e40bd6c39a96e7566e5591cc07561f6760156bfe22c2520493d8e",
+      "afterSha256": "8f771796d13882e03ee1f986e020fe797dfb469ec52f266e390c9dff23a85fdc",
+      "options": { "mode": "semantic", "pageMatching": "index" },
+      "expect": {
+        "beforePages": 1,
+        "afterPages": 1,
+        "equal": false,
+        "semanticQuality": "text",
+        "statusCounts": { "modified": 1 },
+        "requiredFigureStatuses": ["swapped", "swapped"],
+        "requiredWarnings": ["content-reordered"]
+      }
+    },
+    {
+      "id": "local-ligature-text-encoding",
+      "generator": "ligature-text-encoding",
+      "beforeSha256": "92b1cb842269f2c7234b55ce3e1fef36f92c3d16d2ff8e55c408a303f38b13ae",
+      "afterSha256": "ce395cadce35270c49b00ce84a05c17236270950e8cf88b192ae3d98f1dcc19b",
+      "options": { "mode": "semantic", "pageMatching": "index" },
+      "expect": {
+        "beforePages": 1,
+        "afterPages": 1,
+        "equal": true,
+        "semanticQuality": "text",
+        "statusCounts": { "equal": 1 }
+      }
+    },
+    {
+      "id": "local-malformed-object",
+      "generator": "malformed-object",
+      "kind": "error",
+      "beforeSha256": "8d070c2bebd69254828178cb0433dd579c1e1603da0038c5125c5f27a53dfb27",
+      "afterSha256": "1cd3a969cfa587eec05311d4a3abb33dcc652be912adc8872509944190dbbd56",
+      "options": { "mode": "semantic", "pageMatching": "index" },
+      "expect": { "errorCode": "pdfium" }
+    }
+  ]
+}

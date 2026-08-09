@@ -10,8 +10,10 @@ const required = process.env.PIFF_GOLDEN_REQUIRED === '1'
 process.env.PIFF_NATIVE_MODULE ??= join(projectRoot, 'artifacts/piff.linux-x64-gnu.node')
 process.env.PDFIUM_LIBRARY_PATH ??= join(projectRoot, 'artifacts/pdfium/linux-x64/lib/libpdfium.so')
 
-const { PiffSession, piff } = await import('../packages/piff/dist/index.js')
+const { PiffError, PiffSession, piff } = await import('../packages/piff/dist/index.js')
+const { createLocalGoldenFixture } = await import('./local-golden-fixtures.mjs')
 const manifest = JSON.parse(await readFile(join(projectRoot, 'fixtures/golden/manifest.json'), 'utf8'))
+const localManifest = JSON.parse(await readFile(join(projectRoot, 'fixtures/golden/local-manifest.json'), 'utf8'))
 const report = []
 
 for (const fixture of manifest.fixtures) {
@@ -46,17 +48,7 @@ for (const fixture of manifest.fixtures) {
   assert.equal(first.after.pageCount, fixture.expect.afterPages, `${fixture.id} after page count`)
   assert.equal(first.equal, fixture.expect.equal, `${fixture.id} equality`)
 
-  if (fixture.expect.semanticQuality !== undefined) {
-    assert.ok(
-      first.pages
-        .filter((page) => page.beforePage !== undefined && page.afterPage !== undefined)
-        .every((page) => page.semantic?.quality === fixture.expect.semanticQuality),
-      `${fixture.id} semantic quality`,
-    )
-  }
-  if (fixture.expect.statusCounts !== undefined) {
-    assert.deepEqual(statusCounts(first), fixture.expect.statusCounts, `${fixture.id} page statuses`)
-  }
+  assertComparisonExpectations(fixture, first)
 
   let previewBytes
   if (fixture.expect.preview === true) {
@@ -83,6 +75,55 @@ for (const fixture of manifest.fixtures) {
   })
 }
 
+for (const fixture of localManifest.fixtures) {
+  const generated = createLocalGoldenFixture(fixture.generator)
+  assert.equal(sha256(generated.before), fixture.beforeSha256, `${fixture.id} before fixture hash changed`)
+  assert.equal(sha256(generated.after), fixture.afterSha256, `${fixture.id} after fixture hash changed`)
+
+  const options = { dpi: 72, ...fixture.options }
+  if (fixture.kind === 'error') {
+    const firstError = await capturePiffError(generated.before, generated.after, options, fixture.id)
+    const secondError = await capturePiffError(generated.before, generated.after, options, fixture.id)
+    assert.deepEqual(secondError, firstError, `${fixture.id} error classification is not deterministic`)
+    assert.equal(firstError.code, fixture.expect.errorCode, `${fixture.id} error code`)
+    report.push({ id: fixture.id, source: 'local', errorCode: firstError.code })
+    continue
+  }
+
+  const first = await piff(generated.before, generated.after, options)
+  const second = await piff(generated.before, generated.after, options)
+  assert.deepEqual(stableResult(first), stableResult(second), `${fixture.id} output is not deterministic`)
+  assert.equal(first.before.pageCount, fixture.expect.beforePages, `${fixture.id} before page count`)
+  assert.equal(first.after.pageCount, fixture.expect.afterPages, `${fixture.id} after page count`)
+  assert.equal(first.equal, fixture.expect.equal, `${fixture.id} equality`)
+  assertComparisonExpectations(fixture, first)
+
+  let previewBytes
+  if (fixture.expect.preview === true) {
+    const session = await PiffSession.open(generated.before, generated.after, options)
+    try {
+      previewBytes = await session.renderPageDiff(0, { view: 'diff' })
+      const cached = await session.renderPageDiff(0, { view: 'diff' })
+      assert.deepEqual(cached, previewBytes, `${fixture.id} preview changed between requests`)
+      assert.equal(session.cacheDiagnostics().previewCacheHits, 1, `${fixture.id} preview cache hit`)
+    } finally {
+      await session.close()
+    }
+  }
+
+  report.push({
+    id: fixture.id,
+    source: 'local',
+    beforePages: first.before.pageCount,
+    afterPages: first.after.pageCount,
+    equal: first.equal,
+    statuses: statusCounts(first),
+    figureStatuses: first.pages.flatMap((page) => page.figures.map((figure) => figure.status)),
+    previewBytes: previewBytes?.byteLength,
+    previewSha256: previewBytes === undefined ? undefined : sha256(previewBytes),
+  })
+}
+
 await mkdir(join(projectRoot, 'artifacts'), { recursive: true })
 await writeFile(
   join(projectRoot, 'artifacts/golden-report.json'),
@@ -91,6 +132,7 @@ await writeFile(
     generatedAt: new Date().toISOString(),
     referenceRoot,
     sources: manifest.sources,
+    localManifest: 'fixtures/golden/local-manifest.json',
     cases: report,
   }, null, 2)}\n`,
 )
@@ -120,6 +162,56 @@ function statusCounts(result) {
       .sort()
       .map((status) => [status, result.pages.filter((page) => page.status === status).length]),
   )
+}
+
+function assertComparisonExpectations(fixture, result) {
+  if (fixture.expect.semanticQuality !== undefined) {
+    assert.ok(
+      result.pages
+        .filter((page) => page.beforePage !== undefined && page.afterPage !== undefined)
+        .every((page) => page.semantic?.quality === fixture.expect.semanticQuality),
+      `${fixture.id} semantic quality`,
+    )
+  }
+  if (fixture.expect.statusCounts !== undefined) {
+    assert.deepEqual(statusCounts(result), fixture.expect.statusCounts, `${fixture.id} page statuses`)
+  }
+  const blocks = result.pages.flatMap((page) => page.semantic?.blocks ?? [])
+  for (const structure of fixture.expect.requiredStructures ?? []) {
+    assert.ok(blocks.some((block) => block.structure === structure), `${fixture.id} missing structure ${structure}`)
+  }
+  for (const kind of fixture.expect.requiredBlockKinds ?? []) {
+    assert.ok(blocks.some((block) => block.kind === kind), `${fixture.id} missing block kind ${kind}`)
+  }
+  const roles = new Set(blocks.flatMap((block) => [block.beforeRole, block.afterRole].filter(Boolean)))
+  for (const role of fixture.expect.requiredRoles ?? []) {
+    assert.ok(roles.has(role), `${fixture.id} missing role ${role}`)
+  }
+  if (fixture.expect.requiredFigureStatuses !== undefined) {
+    assert.deepEqual(
+      result.pages.flatMap((page) => page.figures.map((figure) => figure.status)),
+      fixture.expect.requiredFigureStatuses,
+      `${fixture.id} figure statuses`,
+    )
+  }
+  const warnings = new Set(result.pages.flatMap((page) => page.warnings))
+  for (const warning of fixture.expect.requiredWarnings ?? []) {
+    assert.ok(warnings.has(warning), `${fixture.id} missing warning ${warning}`)
+  }
+  const serialized = JSON.stringify(result)
+  for (const text of fixture.expect.requiredText ?? []) {
+    assert.ok(serialized.includes(text), `${fixture.id} missing text evidence ${text}`)
+  }
+}
+
+async function capturePiffError(before, after, options, fixtureId) {
+  try {
+    await piff(before, after, options)
+  } catch (error) {
+    assert.ok(error instanceof PiffError, `${fixtureId} did not return a PiffError`)
+    return { code: error.code, message: error.message }
+  }
+  throw new Error(`${fixtureId} unexpectedly succeeded`)
 }
 
 function sha256(bytes) {
