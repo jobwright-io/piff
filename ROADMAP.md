@@ -62,7 +62,7 @@ Acceptance criteria:
 - line hunks remain a derived compatibility representation;
 - JSON remains compact and serializable.
 
-### 3. Reliability and adversarial coverage
+### 3. Reliability and adversarial coverage — complete
 
 The regression harness now covers page structure, figure changes, malformed input, encrypted
 input, resource limits, deterministic output, cancellation boundaries, and bounded-cache eviction.
@@ -86,10 +86,10 @@ golden runner puts that fixture first and requires the first two public results 
 - Checked-in seeds, a bounded `pnpm fuzz` runner, and a weekly GitHub Actions campaign now exercise
   both fuzz targets. The workflow retains libFuzzer artifacts, while reviewed minimized PDFium
   failures can be promoted into `fixtures/golden/promoted/` with byte-count and SHA-256 checks.
-- Expand renderer/version metadata once the packaging workflow exposes the exact PDFium artifact
-  version at runtime.
+- Results expose the compiled PDFium API and the exact loaded PDFium artifact version whenever the
+  runtime library ships a `VERSION` sidecar. Native packages carry that sidecar beside the library.
 
-### 4. Performance and distribution
+### 4. Performance and distribution — complete
 
 The SDK now exposes phase timings for loading, fingerprinting, matching, rendering, pixel and
 figure comparison, region detection, semantic extraction, and total runtime. `pnpm benchmark`
@@ -97,8 +97,9 @@ produces repeatable JSON samples for semantic text and visual-region cases, incl
 runtime metadata. `PiffSession` preview storage is byte-bounded and exposes hit, miss, entry, byte,
 and eviction counters. The README documents the process-level PDFium concurrency boundary.
 
-- Add preview encoding timing to the benchmark report.
-- Expand reproducible native artifacts only after the compatibility corpus is stable.
+- Benchmark JSON and human output report native PNG encoding separately from preview wall time.
+- Native package staging writes a deterministic artifact manifest with file sizes and SHA-256
+  checksums. Release CI verifies the manifest and pinned PDFium build before publication.
 
 ## Deliberate non-goals
 

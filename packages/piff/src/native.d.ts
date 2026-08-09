@@ -23,6 +23,7 @@ interface NativeBinding {
     piff(before: Buffer, after: Buffer, options?: NativeDiffOptions, progress?: NativeProgressCallback, signal?: AbortSignal, cancellationToken?: number): Promise<string>;
     isEqual(before: Buffer, after: Buffer, options?: NativeDiffOptions, progress?: NativeProgressCallback, signal?: AbortSignal, cancellationToken?: number): Promise<boolean>;
     renderPageDiff(before: Buffer, after: Buffer, pageIndex: number, options?: NativeDiffOptions, view?: PdfPagePreviewView, signal?: AbortSignal, cancellationToken?: number): Promise<Buffer>;
+    renderPageDiffWithTiming(before: Buffer, after: Buffer, pageIndex: number, options?: NativeDiffOptions, view?: PdfPagePreviewView, signal?: AbortSignal, cancellationToken?: number): Promise<{ bytes: Buffer; encodeMs: number }>;
     createCancellationToken(): number;
     cancelCancellationToken(token: number): void;
     releaseCancellationToken(token: number): void;

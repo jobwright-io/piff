@@ -27,6 +27,7 @@ import type {
   PdfDocumentReviewItem,
   PiffCacheDiagnostics,
   PiffSessionOptions,
+  PdfPagePreviewTiming,
 } from './types.js'
 
 export type PiffErrorCode =
@@ -137,7 +138,7 @@ type RawDocumentTextDiff = {
 
 interface NativeResult {
   schema_version: number
-  engine: PdfEngineInfo
+  engine: NativeEngineInfo
   equal: boolean
   before_page_count: number
   after_page_count: number
@@ -247,6 +248,15 @@ interface NativeResult {
   }
 }
 
+interface NativeEngineInfo {
+  name: string
+  version: string
+  renderer: string
+  binding: string
+  pdfium_api?: string | null
+  pdfium_version?: string | null
+}
+
 type PreviewCacheEntry = {
   promise: Promise<Uint8Array>
   bytes?: number
@@ -337,18 +347,7 @@ export class PiffSession {
   ): Promise<Uint8Array> {
     this.ensureOpen()
     throwIfAborted(options?.signal)
-    if (!Number.isSafeInteger(pageIndex) || pageIndex < 0) {
-      throw new PiffError('page-index-out-of-bounds', 'pageIndex must be a non-negative safe integer')
-    }
-    if (options?.format !== undefined && options.format !== 'png') {
-      throw new PiffError('invalid-preview-view', `Unsupported page preview format: ${options.format}`)
-    }
-    if (
-      options?.view !== undefined &&
-      !['before', 'after', 'diff'].includes(options.view)
-    ) {
-      throw new PiffError('invalid-preview-view', `Unsupported page preview view: ${options.view}`)
-    }
+    validatePreviewRequest(pageIndex, options)
     const render = () => runWithNativeCancellation(options?.signal, (cancellationToken) =>
       loadNativeBinding().renderPageDiff(
         asBuffer(this.before),
@@ -396,6 +395,31 @@ export class PiffSession {
     })
     this.previews.set(key, { promise: preview })
     return preview
+  }
+
+  /** Render one page diff and return native PNG encoding time without using the preview cache. */
+  async renderPageDiffWithTiming(
+    pageIndex: number,
+    options?: PdfPagePreviewOptions,
+  ): Promise<PdfPagePreviewTiming> {
+    this.ensureOpen()
+    throwIfAborted(options?.signal)
+    validatePreviewRequest(pageIndex, options)
+    const result = await runWithNativeCancellation(options?.signal, (cancellationToken) =>
+      loadNativeBinding().renderPageDiffWithTiming(
+        asBuffer(this.before),
+        asBuffer(this.after),
+        pageIndex,
+        toNativeOptions(this.options),
+        options?.view,
+        options?.signal,
+        cancellationToken,
+      ),
+    )
+    return {
+      bytes: result.bytes,
+      encodeMs: result.encodeMs,
+    }
   }
 
   /** Returns bounded preview-cache counters without exposing cached image buffers. */
@@ -478,7 +502,7 @@ async function compareNative(
 function mapResult(raw: NativeResult): PiffResult {
   return {
     schemaVersion: raw.schema_version,
-    engine: raw.engine,
+    engine: mapEngine(raw.engine),
     equal: raw.equal,
     before: { pageCount: raw.before_page_count },
     after: { pageCount: raw.after_page_count },
@@ -519,6 +543,17 @@ function mapResult(raw: NativeResult): PiffResult {
       semanticMs: raw.stats.semantic_ms,
       totalMs: raw.stats.total_ms,
     },
+  }
+}
+
+function mapEngine(raw: NativeEngineInfo): PdfEngineInfo {
+  return {
+    name: raw.name,
+    version: raw.version,
+    renderer: raw.renderer,
+    binding: raw.binding,
+    pdfiumApi: raw.pdfium_api ?? 'unknown',
+    pdfiumVersion: raw.pdfium_version ?? undefined,
   }
 }
 
@@ -724,6 +759,21 @@ function throwIfAborted(signal: AbortSignal | undefined): void {
   throw new PiffError('cancelled', 'PDF comparison aborted')
 }
 
+function validatePreviewRequest(
+  pageIndex: number,
+  options: PdfPagePreviewOptions | undefined,
+): void {
+  if (!Number.isSafeInteger(pageIndex) || pageIndex < 0) {
+    throw new PiffError('page-index-out-of-bounds', 'pageIndex must be a non-negative safe integer')
+  }
+  if (options?.format !== undefined && options.format !== 'png') {
+    throw new PiffError('invalid-preview-view', `Unsupported page preview format: ${options.format}`)
+  }
+  if (options?.view !== undefined && !['before', 'after', 'diff'].includes(options.view)) {
+    throw new PiffError('invalid-preview-view', `Unsupported page preview view: ${options.view}`)
+  }
+}
+
 export type {
   PiffBounds,
   PiffOptions,
@@ -734,6 +784,7 @@ export type {
   PiffSessionOptions,
   PdfPagePreviewOptions,
   PdfPagePreviewView,
+  PdfPagePreviewTiming,
   PiffRegion,
   PdfFigureDiff,
   PiffResult,

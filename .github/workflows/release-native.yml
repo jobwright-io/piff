@@ -100,7 +100,11 @@ jobs:
 
       - name: Stage platform package
         shell: bash
-        run: node scripts/stage-native-package.mjs --target "${{ matrix.target }}" --native "$RUNNER_TEMP/piff-napi.node" --pdfium "$RUNNER_TEMP/pdfium/${{ matrix.pdfium_runtime }}" --pdfium-root "$RUNNER_TEMP/pdfium" --output "$RUNNER_TEMP/package"
+        run: node scripts/stage-native-package.mjs --target "${{ matrix.target }}" --native "$RUNNER_TEMP/piff-napi.node" --pdfium "$RUNNER_TEMP/pdfium/${{ matrix.pdfium_runtime }}" --pdfium-root "$RUNNER_TEMP/pdfium" --pdfium-tag "$PDFIUM_RELEASE_TAG" --output "$RUNNER_TEMP/package"
+
+      - name: Verify package manifest
+        shell: bash
+        run: node scripts/verify-native-package.mjs --package "$RUNNER_TEMP/package" --target "${{ matrix.target }}" --pdfium-tag "$PDFIUM_RELEASE_TAG"
 
       - name: Upload staged package
         uses: actions/upload-artifact@v4

@@ -57,8 +57,24 @@ export interface PdfPagePreviewOptions {
     signal?: AbortSignal;
 }
 export type PdfPagePreviewView = 'before' | 'after' | 'diff';
+/** Native preview bytes and the time spent encoding them as PNG. */
+export interface PdfPagePreviewTiming {
+    bytes: Uint8Array;
+    encodeMs: number;
+}
 export interface PdfDocumentSummary {
     pageCount: number;
+}
+/** Engine metadata carried by every completed comparison. */
+export interface PdfEngineInfo {
+    name: string;
+    version: string;
+    renderer: string;
+    binding: string;
+    /** FPDF API headers used by the compiled pdfium-render binding. */
+    pdfiumApi: string;
+    /** Exact artifact version read from the loaded PDFium VERSION file, when available. */
+    pdfiumVersion?: string;
 }
 export interface PiffBounds {
     x: number;
@@ -180,6 +196,8 @@ export interface PiffStats {
     totalMs: number;
 }
 export interface PiffResult {
+    schemaVersion: number;
+    engine: PdfEngineInfo;
     equal: boolean;
     before: PdfDocumentSummary;
     after: PdfDocumentSummary;

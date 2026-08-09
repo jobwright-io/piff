@@ -1,6 +1,9 @@
-import { cp, mkdir, readdir, stat, writeFile } from 'node:fs/promises'
-import { basename, dirname, join, resolve } from 'node:path'
+import { createHash } from 'node:crypto'
+import { cp, mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises'
+import { basename, dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+
+import { parsePdfiumVersion } from './pdfium-version.mjs'
 
 const TARGETS = new Set([
   'linux-x64-gnu',
@@ -32,12 +35,24 @@ const pdfiumRoot = args['pdfium-root'] === undefined
   ? dirname(dirname(pdfiumPath))
   : resolve(args['pdfium-root'])
 const platform = platformMetadata(target)
+const pdfiumVersionPath = join(pdfiumRoot, 'VERSION')
+const pdfiumVersionText = await readFile(pdfiumVersionPath, 'utf8').catch(() => undefined)
+if (pdfiumVersionText === undefined) {
+  throw new Error(`PDFium VERSION file is required for reproducible packaging: ${pdfiumVersionPath}`)
+}
+const pdfiumVersion = parsePdfiumVersion(pdfiumVersionText)
+if (args['pdfium-tag'] !== undefined && pdfiumVersion.build !== args['pdfium-tag']) {
+  throw new Error(
+    `PDFium VERSION build ${pdfiumVersion.build ?? 'unknown'} does not match requested tag ${args['pdfium-tag']}`,
+  )
+}
 
 await mkdir(outputPath, { recursive: true })
 await mkdir(join(outputPath, 'pdfium'), { recursive: true })
 await mkdir(join(outputPath, 'licenses'), { recursive: true })
 await cp(nativePath, join(outputPath, nativeFile))
 await cp(pdfiumPath, packagePdfiumPath)
+await cp(pdfiumVersionPath, join(outputPath, 'pdfium', 'VERSION'))
 await copyIfPresent(join(pdfiumRoot, 'LICENSE'), join(outputPath, 'licenses', 'PDFIUM-LICENSE'))
 await copyIfPresent(join(pdfiumRoot, 'VERSION'), join(outputPath, 'licenses', 'PDFIUM-VERSION'))
 await copyDirectory(join(pdfiumRoot, 'licenses'), join(outputPath, 'licenses', 'third-party'))
@@ -68,11 +83,33 @@ await writeFile(
       nativeFile,
       'pdfium',
       'licenses',
+      'artifact-manifest.json',
     ],
     publishConfig: {
       access: 'public',
       registry: 'https://npm.pkg.github.com',
     },
+  }, null, 2)}\n`,
+)
+
+const files = await listFiles(outputPath)
+await writeFile(
+  join(outputPath, 'artifact-manifest.json'),
+  `${JSON.stringify({
+    schemaVersion: 1,
+    package: {
+      name: packageName,
+      version: packageVersion,
+      target,
+    },
+    renderer: {
+      name: 'pdfium',
+      api: args['pdfium-api'] ?? '7881',
+      version: pdfiumVersion.version,
+      build: pdfiumVersion.build ?? null,
+      versionFile: 'pdfium/VERSION',
+    },
+    files: await Promise.all(files.map((path) => fileMetadata(outputPath, path))),
   }, null, 2)}\n`,
 )
 
@@ -156,4 +193,30 @@ async function copyDirectory(source, destination) {
       await cp(join(source, entry.name), join(destination, entry.name))
     }
   }
+}
+
+async function listFiles(root, current = root) {
+  const files = []
+  for (const entry of await readdir(current, { withFileTypes: true })) {
+    const path = join(current, entry.name)
+    if (entry.isDirectory()) {
+      files.push(...await listFiles(root, path))
+    } else if (entry.isFile()) {
+      files.push(path)
+    }
+  }
+  return files.sort(comparePaths)
+}
+
+async function fileMetadata(root, path) {
+  const bytes = await readFile(path)
+  return {
+    path: relative(root, path).replaceAll('\\', '/'),
+    bytes: bytes.length,
+    sha256: createHash('sha256').update(bytes).digest('hex'),
+  }
+}
+
+function comparePaths(left, right) {
+  return left < right ? -1 : left > right ? 1 : 0
 }

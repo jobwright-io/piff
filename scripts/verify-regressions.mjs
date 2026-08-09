@@ -307,6 +307,8 @@ for (const fixture of cases) {
     version: '0.1.0',
     renderer: 'pdfium',
     binding: 'pdfium-render',
+    pdfiumApi: '7881',
+    pdfiumVersion: '151.0.7881.0',
   })
   reportEngine ??= result.engine
   fixture.verify(result)

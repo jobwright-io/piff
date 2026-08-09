@@ -477,9 +477,18 @@ async function handleWorkerRequest(
   }
 }
 
+interface RawEngineInfo {
+  name: string
+  version: string
+  renderer: string
+  binding: string
+  pdfium_api?: string | null
+  pdfium_version?: string | null
+}
+
 interface WasmResult {
   schema_version: number
-  engine: PdfEngineInfo
+  engine: RawEngineInfo
   equal: boolean
   before_page_count: number
   after_page_count: number
@@ -551,7 +560,14 @@ interface WasmResult {
 function mapResult(raw: WasmResult): PiffResult {
   return {
     schemaVersion: raw.schema_version,
-    engine: raw.engine,
+    engine: {
+      name: raw.engine.name,
+      version: raw.engine.version,
+      renderer: raw.engine.renderer,
+      binding: raw.engine.binding,
+      pdfiumApi: raw.engine.pdfium_api ?? 'unknown',
+      pdfiumVersion: raw.engine.pdfium_version ?? undefined,
+    },
     equal: raw.equal,
     before: { pageCount: raw.before_page_count },
     after: { pageCount: raw.after_page_count },

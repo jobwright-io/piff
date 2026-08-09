@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use piff_core::DiffOptions;
 use piff_pdfium::{
-    check_pdfium, compare_files_with_passwords, default_linux_pdfium_path,
+    check_pdfium, compare_files_with_passwords, default_linux_pdfium_path, engine_info,
     is_equal_bytes_with_passwords_and_progress, PageMatching, PageStatus, PdfEngineInfo,
     PdfPasswords, PdfResourceLimits, PiffError, PiffMode, PiffOptions, PiffResult,
     RESULT_SCHEMA_VERSION,
@@ -368,7 +368,7 @@ fn run_equal(command: EqualCommand) -> Result<i32, CliError> {
     )?;
     let output = EqualityOutput {
         schema_version: RESULT_SCHEMA_VERSION,
-        engine: piff_pdfium::ENGINE_INFO,
+        engine: engine_info(library_path.as_deref()),
         equal,
     };
     write_json(&output, command.output.as_deref(), command.compact)?;

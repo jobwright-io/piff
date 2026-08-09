@@ -32,6 +32,8 @@ try {
       version: '0.1.0',
       renderer: 'pdfium',
       binding: 'pdfium-render',
+      pdfium_api: '7881',
+      pdfium_version: '151.0.7881.0',
     },
     library: pdfium,
   })

@@ -63,6 +63,15 @@ interface NativeBinding {
     signal?: AbortSignal,
     cancellationToken?: number,
   ): Promise<Buffer>
+  renderPageDiffWithTiming(
+    before: Buffer,
+    after: Buffer,
+    pageIndex: number,
+    options?: NativeDiffOptions,
+    view?: PdfPagePreviewView,
+    signal?: AbortSignal,
+    cancellationToken?: number,
+  ): Promise<{ bytes: Buffer; encodeMs: number }>
   createCancellationToken(): number
   cancelCancellationToken(token: number): void
   releaseCancellationToken(token: number): void

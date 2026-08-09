@@ -11,9 +11,9 @@ use napi_derive::napi;
 use piff_core::DiffOptions;
 use piff_pdfium::{
     compare_bytes_with_passwords_and_progress, is_equal_bytes_with_passwords_and_progress,
-    render_page_diff_png_with_passwords_and_cancellation, CancellationToken, PageMatching,
-    PdfPasswords, PdfRenderRequest, PdfResourceLimits, PiffMode, PiffOptions, PiffResult,
-    PreviewView, ProgressEvent, ProgressPhase,
+    render_page_diff_png_with_timing, CancellationToken, PageMatching, PdfPasswords,
+    PdfRenderRequest, PdfResourceLimits, PiffMode, PiffOptions, PiffResult, PreviewView,
+    ProgressEvent, ProgressPhase, RenderedPagePreview,
 };
 use piff_semantic::TextReadingOrder;
 
@@ -31,6 +31,12 @@ pub struct ResourceLimitsJs {
     pub max_input_bytes: Option<f64>,
     pub max_pages: Option<u32>,
     pub max_page_pixels: Option<f64>,
+}
+
+#[napi(object)]
+pub struct RenderPageTimingJs {
+    pub bytes: Buffer,
+    pub encode_ms: f64,
 }
 
 #[derive(Default)]
@@ -165,28 +171,88 @@ impl Task for RenderPageTask {
     fn compute(&mut self) -> napi::Result<Self::Output> {
         let before = std::mem::take(&mut self.before);
         let after = std::mem::take(&mut self.after);
-        let library_path = self.library_path.as_deref();
-        catch_unwind(AssertUnwindSafe(|| {
-            render_page_diff_png_with_passwords_and_cancellation(
-                before,
-                after,
-                self.page_index,
-                library_path,
-                self.options,
-                self.view,
-                PdfRenderRequest {
-                    passwords: self.passwords.as_refs(),
-                    cancellation: self.cancellation.as_ref(),
-                },
-            )
-            .map_err(|error| Error::from_reason(error.to_string()))
-        }))
-        .map_err(|payload| Error::from_reason(panic_message(payload)))?
+        render_page_timing(
+            before,
+            after,
+            self.page_index,
+            self.options,
+            self.view,
+            PdfRenderRequest {
+                passwords: self.passwords.as_refs(),
+                cancellation: self.cancellation.as_ref(),
+            },
+            self.library_path.as_deref(),
+        )
+        .map(|preview| preview.bytes)
     }
 
     fn resolve(&mut self, _env: Env, output: Self::Output) -> napi::Result<Self::JsValue> {
         Ok(Buffer::from(output))
     }
+}
+
+pub struct RenderPageTimingTask {
+    before: Vec<u8>,
+    after: Vec<u8>,
+    page_index: usize,
+    options: PiffOptions,
+    view: PreviewView,
+    passwords: PasswordsOwned,
+    library_path: Option<PathBuf>,
+    cancellation: Option<CancellationToken>,
+}
+
+impl Task for RenderPageTimingTask {
+    type Output = RenderedPagePreview;
+    type JsValue = RenderPageTimingJs;
+
+    fn compute(&mut self) -> napi::Result<Self::Output> {
+        let before = std::mem::take(&mut self.before);
+        let after = std::mem::take(&mut self.after);
+        render_page_timing(
+            before,
+            after,
+            self.page_index,
+            self.options,
+            self.view,
+            PdfRenderRequest {
+                passwords: self.passwords.as_refs(),
+                cancellation: self.cancellation.as_ref(),
+            },
+            self.library_path.as_deref(),
+        )
+    }
+
+    fn resolve(&mut self, _env: Env, output: Self::Output) -> napi::Result<Self::JsValue> {
+        Ok(RenderPageTimingJs {
+            bytes: Buffer::from(output.bytes),
+            encode_ms: output.encode_ms,
+        })
+    }
+}
+
+fn render_page_timing(
+    before: Vec<u8>,
+    after: Vec<u8>,
+    page_index: usize,
+    options: PiffOptions,
+    view: PreviewView,
+    request: PdfRenderRequest<'_>,
+    library_path: Option<&std::path::Path>,
+) -> napi::Result<RenderedPagePreview> {
+    catch_unwind(AssertUnwindSafe(|| {
+        render_page_diff_png_with_timing(
+            before,
+            after,
+            page_index,
+            library_path,
+            options,
+            view,
+            request,
+        )
+        .map_err(|error| Error::from_reason(error.to_string()))
+    }))
+    .map_err(|payload| Error::from_reason(panic_message(payload)))?
 }
 
 /// Starts an off-thread PDF comparison from two Node or Bun Buffers.
@@ -256,6 +322,34 @@ pub fn render_page_diff(
     let (options, passwords) = split_options(options)?;
     Ok(AsyncTask::with_optional_signal(
         RenderPageTask {
+            before: before.to_vec(),
+            after: after.to_vec(),
+            page_index: page_index as usize,
+            options,
+            view: preview_view(view.as_deref())?,
+            passwords,
+            library_path: env::var_os("PDFIUM_LIBRARY_PATH").map(PathBuf::from),
+            cancellation,
+        },
+        signal,
+    ))
+}
+
+/// Starts an off-thread PNG render and returns native PNG encoding timing.
+#[napi]
+pub fn render_page_diff_with_timing(
+    before: Buffer,
+    after: Buffer,
+    page_index: u32,
+    options: Option<DiffOptionsJs>,
+    view: Option<String>,
+    signal: Option<AbortSignal>,
+    cancellation_token: Option<u32>,
+) -> napi::Result<AsyncTask<RenderPageTimingTask>> {
+    let cancellation = cancellation_for(cancellation_token)?;
+    let (options, passwords) = split_options(options)?;
+    Ok(AsyncTask::with_optional_signal(
+        RenderPageTimingTask {
             before: before.to_vec(),
             after: after.to_vec(),
             page_index: page_index as usize,

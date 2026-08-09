@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::fs;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -37,20 +38,30 @@ pub const DEFAULT_MAX_PAGES: usize = 1_000;
 pub const DEFAULT_MAX_PAGE_PIXELS: u64 = 25_000_000;
 pub const RESULT_SCHEMA_VERSION: u32 = 1;
 
-#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct PdfEngineInfo {
     pub name: &'static str,
     pub version: &'static str,
     pub renderer: &'static str,
     pub binding: &'static str,
+    pub pdfium_api: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pdfium_version: Option<String>,
 }
 
-pub const ENGINE_INFO: PdfEngineInfo = PdfEngineInfo {
-    name: "piff",
-    version: env!("CARGO_PKG_VERSION"),
-    renderer: "pdfium",
-    binding: "pdfium-render",
-};
+const PDFIUM_API_VERSION: &str = "7881";
+
+/// Returns Piff and loaded PDFium metadata for a configured runtime library.
+pub fn engine_info(library_path: Option<&Path>) -> PdfEngineInfo {
+    PdfEngineInfo {
+        name: "piff",
+        version: env!("CARGO_PKG_VERSION"),
+        renderer: "pdfium",
+        binding: "pdfium-render",
+        pdfium_api: PDFIUM_API_VERSION,
+        pdfium_version: library_path.and_then(read_pdfium_version),
+    }
+}
 
 #[derive(Debug, Clone, Copy)]
 pub struct PdfResourceLimits {
@@ -163,6 +174,13 @@ impl<'a> PdfPasswords<'a> {
 pub struct PdfRenderRequest<'a> {
     pub passwords: PdfPasswords<'a>,
     pub cancellation: Option<&'a CancellationToken>,
+}
+
+/// The encoded bytes and native PNG encoding time for one lazy preview.
+#[derive(Debug)]
+pub struct RenderedPagePreview {
+    pub bytes: Vec<u8>,
+    pub encode_ms: f64,
 }
 
 impl CancellationToken {
@@ -457,7 +475,7 @@ pub struct PdfDocumentReviewItem {
 /// Verifies that the configured Pdfium backend can be loaded.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn check_pdfium(library_path: Option<&Path>) -> Result<PdfEngineInfo, PiffError> {
-    with_pdfium(library_path, |_| Ok(ENGINE_INFO))
+    with_pdfium(library_path, |_| Ok(engine_info(library_path)))
 }
 
 /// Compares two PDFs using one shared Pdfium instance.
@@ -506,13 +524,25 @@ pub fn compare_files_with_passwords(
     )?;
     ensure_file_input_limit(after_path.as_ref(), "after", options.limits.max_input_bytes)?;
     let started = Instant::now();
+    let engine = engine_info(library_path);
     with_pdfium(library_path, |pdfium| {
         let load_started = Instant::now();
         let (before, after) =
             load_pdf_pair_from_files(pdfium, before_path.as_ref(), after_path.as_ref(), passwords)?;
         let load_ms = elapsed_ms(load_started);
         let retry_encrypted = needs_encrypted_semantic_retry(options, &before, &after);
-        let first = compare_documents(&before, &after, options, started, load_ms, None, None)?;
+        let first = compare_documents(
+            &before,
+            &after,
+            options,
+            ComparisonContext {
+                engine: engine.clone(),
+                started,
+                load_ms,
+                progress: None,
+                cancellation: None,
+            },
+        )?;
         if !retry_encrypted {
             return Ok(first);
         }
@@ -527,8 +557,18 @@ pub fn compare_files_with_passwords(
         let (before, after) =
             load_pdf_pair_from_files(pdfium, before_path.as_ref(), after_path.as_ref(), passwords)?;
         let retry_load_ms = elapsed_ms(retry_started);
-        let mut result =
-            compare_documents(&before, &after, options, started, retry_load_ms, None, None)?;
+        let mut result = compare_documents(
+            &before,
+            &after,
+            options,
+            ComparisonContext {
+                engine,
+                started,
+                load_ms: retry_load_ms,
+                progress: None,
+                cancellation: None,
+            },
+        )?;
         add_retry_stats(&mut result, first_stats);
         Ok(result)
     })
@@ -608,6 +648,7 @@ pub fn compare_bytes_with_passwords_and_progress(
         options
     };
     let started = Instant::now();
+    let engine = engine_info(library_path);
     with_pdfium(library_path, |pdfium| {
         let load_started = Instant::now();
         let (before, after) =
@@ -626,10 +667,13 @@ pub fn compare_bytes_with_passwords_and_progress(
             &before,
             &after,
             options,
-            started,
-            load_ms,
-            progress,
-            cancellation,
+            ComparisonContext {
+                engine: engine.clone(),
+                started,
+                load_ms,
+                progress,
+                cancellation,
+            },
         )?;
         if !retry_encrypted {
             return Ok(first);
@@ -648,10 +692,13 @@ pub fn compare_bytes_with_passwords_and_progress(
             &before,
             &after,
             options,
-            started,
-            retry_load_ms,
-            progress,
-            cancellation,
+            ComparisonContext {
+                engine,
+                started,
+                load_ms: retry_load_ms,
+                progress,
+                cancellation,
+            },
         )?;
         add_retry_stats(&mut result, first_stats);
         Ok(result)
@@ -918,6 +965,28 @@ pub fn render_page_diff_png_with_passwords_and_cancellation(
     view: PreviewView,
     request: PdfRenderRequest<'_>,
 ) -> Result<Vec<u8>, PiffError> {
+    render_page_diff_png_with_timing(
+        before_bytes,
+        after_bytes,
+        page_index,
+        library_path,
+        options,
+        view,
+        request,
+    )
+    .map(|preview| preview.bytes)
+}
+
+/// Renders one page diff and reports the native PNG encoding time separately from rendering.
+pub fn render_page_diff_png_with_timing(
+    before_bytes: Vec<u8>,
+    after_bytes: Vec<u8>,
+    page_index: usize,
+    library_path: Option<&Path>,
+    options: PiffOptions,
+    view: PreviewView,
+    request: PdfRenderRequest<'_>,
+) -> Result<RenderedPagePreview, PiffError> {
     validate_options(options)?;
     ensure_byte_input_limits(&before_bytes, &after_bytes, options.limits.max_input_bytes)?;
     ensure_not_cancelled(request.cancellation)?;
@@ -1002,7 +1071,12 @@ pub fn render_page_diff_png_with_passwords_and_cancellation(
             ),
             PreviewView::Diff => page_diff.preview,
         };
-        encode_png(preview)
+        let encode_started = Instant::now();
+        let bytes = encode_png(preview)?;
+        Ok(RenderedPagePreview {
+            bytes,
+            encode_ms: elapsed_ms(encode_started),
+        })
     })
 }
 
@@ -1368,15 +1442,27 @@ fn intersection_area(left: SemanticBounds, right: SemanticBounds) -> f32 {
     (x2 - x1).max(0.0) * (y2 - y1).max(0.0)
 }
 
+struct ComparisonContext<'a> {
+    engine: PdfEngineInfo,
+    started: Instant,
+    load_ms: f64,
+    progress: Option<&'a dyn Fn(ProgressEvent)>,
+    cancellation: Option<&'a CancellationToken>,
+}
+
 fn compare_documents(
     before: &PdfDocument<'_>,
     after: &PdfDocument<'_>,
     options: PiffOptions,
-    started: Instant,
-    load_ms: f64,
-    progress: Option<&dyn Fn(ProgressEvent)>,
-    cancellation: Option<&CancellationToken>,
+    context: ComparisonContext<'_>,
 ) -> Result<PiffResult, PiffError> {
+    let ComparisonContext {
+        engine,
+        started,
+        load_ms,
+        progress,
+        cancellation,
+    } = context;
     ensure_not_cancelled(cancellation)?;
     let before_page_count = before.pages().len().max(0) as usize;
     let after_page_count = after.pages().len().max(0) as usize;
@@ -1561,7 +1647,7 @@ fn compare_documents(
         matches!(options.mode, PiffMode::Semantic).then(|| build_document_text_diff(&pages));
     Ok(PiffResult {
         schema_version: RESULT_SCHEMA_VERSION,
-        engine: ENGINE_INFO,
+        engine,
         equal,
         before_page_count,
         after_page_count,
@@ -2229,6 +2315,42 @@ fn create_pdfium(_library_path: Option<&Path>) -> Result<Pdfium, String> {
     Pdfium::bind_to_system_library()
         .map(Pdfium::new)
         .map_err(|error| error.to_string())
+}
+
+fn read_pdfium_version(library_path: &Path) -> Option<String> {
+    let parent = library_path.parent()?;
+    let mut candidates = vec![parent.join("VERSION")];
+    if let Some(root) = parent.parent() {
+        candidates.push(root.join("VERSION"));
+        candidates.push(root.join("licenses/PDFIUM-VERSION"));
+    }
+
+    candidates.into_iter().find_map(|path| {
+        let contents = fs::read_to_string(path).ok()?;
+        let fields = contents
+            .lines()
+            .filter_map(|line| line.split_once('='))
+            .map(|(key, value)| (key.trim(), value.trim()))
+            .collect::<HashMap<_, _>>();
+        match (
+            fields.get("MAJOR"),
+            fields.get("MINOR"),
+            fields.get("BUILD"),
+            fields.get("PATCH"),
+        ) {
+            (Some(major), Some(minor), Some(build), Some(patch))
+                if [major, minor, build, patch]
+                    .iter()
+                    .all(|value| value.parse::<u64>().is_ok()) =>
+            {
+                Some(format!("{major}.{minor}.{build}.{patch}"))
+            }
+            _ => {
+                let value = contents.trim();
+                (!value.is_empty()).then(|| value.to_owned())
+            }
+        }
+    })
 }
 
 fn page_geometry(page: &PdfPage<'_>) -> PageGeometry {

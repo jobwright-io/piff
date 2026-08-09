@@ -93,6 +93,7 @@ for (const fixture of selectedCases) {
     phasesMs: Object.fromEntries(phaseNames.map((phase) => [phase, summarize(samples.map((sample) => sample.stats[phase]))])),
     comparisonWallMs: summarize(samples.map((sample) => sample.comparisonWallMs)),
     previewWallMs: summarize(samples.map((sample) => sample.previewWallMs)),
+    previewEncodeMs: summarize(samples.map((sample) => sample.previewEncodeMs)),
     previewBytes: summarize(samples.map((sample) => sample.previewBytes)),
     equal: samples[0].equal,
   })
@@ -109,6 +110,7 @@ if (args.json === true) {
     }
     console.log(`  comparison wall: p50 ${benchmark.comparisonWallMs.p50.toFixed(2)} ms`)
     console.log(`  preview wall: p50 ${benchmark.previewWallMs.p50.toFixed(2)} ms`)
+    console.log(`  preview PNG encode: p50 ${benchmark.previewEncodeMs.p50.toFixed(2)} ms`)
   }
 }
 
@@ -124,7 +126,7 @@ async function runCase(fixture) {
     const result = await session.compare()
     const comparisonWallMs = performance.now() - comparisonStarted
     const previewStarted = performance.now()
-    const preview = await session.renderPageDiff(0, { view: 'diff' })
+    const preview = await session.renderPageDiffWithTiming(0, { view: 'diff' })
     const previewWallMs = performance.now() - previewStarted
     return {
       engine: result.engine,
@@ -132,7 +134,8 @@ async function runCase(fixture) {
       stats: result.stats,
       comparisonWallMs,
       previewWallMs,
-      previewBytes: preview.byteLength,
+      previewEncodeMs: preview.encodeMs,
+      previewBytes: preview.bytes.byteLength,
     }
   } finally {
     await session.close()

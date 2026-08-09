@@ -82,6 +82,12 @@ export interface PdfPagePreviewOptions {
 
 export type PdfPagePreviewView = 'before' | 'after' | 'diff'
 
+/** Native preview bytes and the time spent encoding them as PNG. */
+export interface PdfPagePreviewTiming {
+  bytes: Uint8Array
+  encodeMs: number
+}
+
 export interface PdfDocumentSummary {
   pageCount: number
 }
@@ -92,6 +98,10 @@ export interface PdfEngineInfo {
   version: string
   renderer: string
   binding: string
+  /** FPDF API headers used by the compiled pdfium-render binding. */
+  pdfiumApi: string
+  /** Exact artifact version read from the loaded PDFium VERSION file, when available. */
+  pdfiumVersion?: string
 }
 
 export interface PiffBounds {
