@@ -1,0 +1,58 @@
+name: Fuzz
+
+on:
+  workflow_dispatch:
+    inputs:
+      seconds:
+        description: Seconds to spend on each fuzz target
+        required: false
+        default: '300'
+        type: string
+  schedule:
+    - cron: '17 3 * * 0'
+
+permissions:
+  contents: read
+
+jobs:
+  fuzz:
+    name: Bounded libFuzzer campaign
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      PDFIUM_RELEASE_TAG: '7881'
+      PDFIUM_LIBRARY_PATH: artifacts/pdfium/linux-x64/lib/libpdfium.so
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install nightly Rust
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.9.0
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+
+      - name: Download pinned PDFium
+        run: node scripts/download-pdfium.mjs --target linux-x64-gnu --tag "$PDFIUM_RELEASE_TAG" --output artifacts/pdfium
+
+      - name: Run fuzz campaign
+        run: pnpm fuzz -- --target all --seconds "${{ github.event.inputs.seconds || '300' }}"
+
+      - name: Upload fuzz artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: piff-fuzz-artifacts
+          path: artifacts/fuzz
+          if-no-files-found: ignore
+          retention-days: 14

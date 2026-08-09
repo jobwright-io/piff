@@ -45,3 +45,18 @@ before the rest of the corpus runs.
 The source repositories are used under their own licenses. `pdfium-render` and Hayro are
 MIT/Apache-2.0 dual licensed. PDF Inspector is MIT licensed. Check the source checkout before
 redistributing any fixture outside this local regression workflow.
+
+## Promoted fuzz failures
+
+`promoted/` is a checked-in corpus for reviewed, minimized PDF loading failures. The manifest pins
+each copied input by byte count and SHA-256, and `pnpm verify:golden` checks either deterministic
+self-comparison or the explicitly recorded stable error code. Promote only after the underlying
+failure has been fixed or reduced to a supported, repeatable result. Never promote a private PDF.
+
+```sh
+pnpm promote:fuzz -- \
+  --target pdf_loading \
+  --id issue-123 \
+  --input artifacts/fuzz/pdf_loading/crash-... \
+  --expect-error pdfium
+```

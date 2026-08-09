@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { access, mkdir, readFile, writeFile } from 'node:fs/promises'
-import { join, resolve } from 'node:path'
+import { isAbsolute, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const projectRoot = resolve(fileURLToPath(new URL('..', import.meta.url)))
@@ -14,6 +14,10 @@ const { PiffError, PiffSession, piff } = await import('../packages/piff/dist/ind
 const { createLocalGoldenFixture } = await import('./local-golden-fixtures.mjs')
 const manifest = JSON.parse(await readFile(join(projectRoot, 'fixtures/golden/manifest.json'), 'utf8'))
 const localManifest = JSON.parse(await readFile(join(projectRoot, 'fixtures/golden/local-manifest.json'), 'utf8'))
+const promotedRoot = join(projectRoot, 'fixtures/golden/promoted')
+const promotedManifest = JSON.parse(await readFile(join(promotedRoot, 'manifest.json'), 'utf8'))
+assert.equal(promotedManifest.schemaVersion, 1, 'unsupported promoted corpus manifest schema')
+assert.ok(Array.isArray(promotedManifest.fixtures), 'promoted corpus fixtures must be an array')
 const report = []
 
 for (const fixture of manifest.fixtures) {
@@ -75,6 +79,45 @@ for (const fixture of manifest.fixtures) {
   })
 }
 
+for (const fixture of promotedManifest.fixtures) {
+  assert.equal(fixture.target, 'pdf_loading', `${fixture.id} promoted target`)
+  assert.match(fixture.id, /^[a-z0-9][a-z0-9._-]*$/, `${fixture.id} promoted ID`)
+  assert.equal(typeof fixture.path, 'string', `${fixture.id} promoted path`)
+  assert.ok(Number.isSafeInteger(fixture.bytes) && fixture.bytes > 0, `${fixture.id} promoted byte count`)
+  assert.match(fixture.sha256, /^[a-f0-9]{64}$/, `${fixture.id} promoted SHA-256`)
+  const fixturePath = resolve(promotedRoot, fixture.path)
+  const relativePath = relative(promotedRoot, fixturePath)
+  assert.ok(
+    relativePath !== '' && !isAbsolute(relativePath) && !relativePath.startsWith('..'),
+    `${fixture.id} promoted path escapes corpus directory`,
+  )
+  const bytes = await readFile(fixturePath)
+  assert.equal(bytes.length, fixture.bytes, `${fixture.id} promoted byte count changed`)
+  assert.equal(sha256(bytes), fixture.sha256, `${fixture.id} promoted fixture hash changed`)
+
+  const options = { dpi: 72, mode: 'semantic', pageMatching: 'index' }
+  if (fixture.expectError !== undefined) {
+    const firstError = await capturePiffError(bytes, bytes, options, fixture.id)
+    const secondError = await capturePiffError(bytes, bytes, options, fixture.id)
+    assert.deepEqual(secondError, firstError, `${fixture.id} promoted error is not deterministic`)
+    assert.equal(firstError.code, fixture.expectError, `${fixture.id} promoted error code`)
+    report.push({ id: fixture.id, source: 'promoted', bytes: bytes.length, errorCode: firstError.code })
+    continue
+  }
+
+  const first = await piff(bytes, bytes, options)
+  const second = await piff(bytes, bytes, options)
+  assert.deepEqual(stableResult(first), stableResult(second), `${fixture.id} promoted output is not deterministic`)
+  assert.equal(first.equal, true, `${fixture.id} promoted self-comparison`)
+  report.push({
+    id: fixture.id,
+    source: 'promoted',
+    bytes: bytes.length,
+    equal: first.equal,
+    statuses: statusCounts(first),
+  })
+}
+
 for (const fixture of localManifest.fixtures) {
   const generated = createLocalGoldenFixture(fixture.generator)
   assert.equal(sha256(generated.before), fixture.beforeSha256, `${fixture.id} before fixture hash changed`)
@@ -133,6 +176,7 @@ await writeFile(
     referenceRoot,
     sources: manifest.sources,
     localManifest: 'fixtures/golden/local-manifest.json',
+    promotedManifest: 'fixtures/golden/promoted/manifest.json',
     cases: report,
   }, null, 2)}\n`,
 )

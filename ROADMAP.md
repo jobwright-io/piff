@@ -83,8 +83,9 @@ golden runner puts that fixture first and requires the first two public results 
   rendering, and comparing boundaries. It also checks pre-cancelled compare, equality, and preview
   calls, resource-limit mappings, stable malformed-input errors, fresh-process determinism, and
   equivalent CLI failures.
-- Run sustained fuzz campaigns against the checked-in targets and promote minimized failures into
-  the golden corpus.
+- Checked-in seeds, a bounded `pnpm fuzz` runner, and a weekly GitHub Actions campaign now exercise
+  both fuzz targets. The workflow retains libFuzzer artifacts, while reviewed minimized PDFium
+  failures can be promoted into `fixtures/golden/promoted/` with byte-count and SHA-256 checks.
 - Expand renderer/version metadata once the packaging workflow exposes the exact PDFium artifact
   version at runtime.
 

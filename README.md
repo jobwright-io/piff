@@ -170,7 +170,10 @@ caching. It can additionally check the pinned external corpus under `references/
 `pnpm verify:hostile` exercises SDK progress and cancellation at each pipeline phase, resource
 limits, malformed-input error stability, fresh-process determinism, and equivalent CLI failures.
 The fuzz targets under `fuzz/` cover semantic normalization and the PDFium loading boundary; the
-PDF loading target requires `PDFIUM_LIBRARY_PATH` and should run in an isolated process.
+PDF loading target requires `PDFIUM_LIBRARY_PATH` and should run in an isolated process. Run a
+bounded local campaign with `pnpm fuzz -- --target all --seconds 30`; it requires nightly Rust and
+`cargo-fuzz`. The scheduled fuzz workflow retains crash artifacts, and reviewed minimized PDF
+loading failures can be promoted with `pnpm promote:fuzz` into the golden corpus.
 The optional golden corpus under `fixtures/golden/` checks real PDFs from pinned reference
 checkouts. Set `PIFF_GOLDEN_REQUIRED=1` when a missing or changed fixture should fail the command.
 
