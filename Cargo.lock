@@ -571,72 +571,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
-name = "piff"
-version = "0.1.0"
-dependencies = [
- "clap",
- "piff-core",
- "piff-pdfium",
- "piff-semantic",
- "serde",
- "serde_json",
- "thiserror",
-]
-
-[[package]]
-name = "piff-core"
-version = "0.1.0"
-dependencies = [
- "image",
- "serde",
- "thiserror",
-]
-
-[[package]]
-name = "piff-napi"
-version = "0.1.0"
-dependencies = [
- "napi",
- "napi-build",
- "napi-derive",
- "piff-core",
- "piff-pdfium",
- "piff-semantic",
- "serde_json",
-]
-
-[[package]]
-name = "piff-pdfium"
-version = "0.1.0"
-dependencies = [
- "image",
- "piff-core",
- "piff-semantic",
- "pdfium-render",
- "serde",
- "thiserror",
-]
-
-[[package]]
-name = "piff-semantic"
-version = "0.1.0"
-dependencies = [
- "serde",
-]
-
-[[package]]
-name = "piff-wasm"
-version = "0.1.0"
-dependencies = [
- "piff-core",
- "piff-pdfium",
- "piff-semantic",
- "serde",
- "serde_json",
- "wasm-bindgen",
-]
-
-[[package]]
 name = "pdfium-render"
 version = "0.9.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -660,6 +594,72 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
+]
+
+[[package]]
+name = "piff"
+version = "0.1.1"
+dependencies = [
+ "clap",
+ "piff-core",
+ "piff-pdfium",
+ "piff-semantic",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
+name = "piff-core"
+version = "0.1.1"
+dependencies = [
+ "image",
+ "serde",
+ "thiserror",
+]
+
+[[package]]
+name = "piff-napi"
+version = "0.1.1"
+dependencies = [
+ "napi",
+ "napi-build",
+ "napi-derive",
+ "piff-core",
+ "piff-pdfium",
+ "piff-semantic",
+ "serde_json",
+]
+
+[[package]]
+name = "piff-pdfium"
+version = "0.1.1"
+dependencies = [
+ "image",
+ "pdfium-render",
+ "piff-core",
+ "piff-semantic",
+ "serde",
+ "thiserror",
+]
+
+[[package]]
+name = "piff-semantic"
+version = "0.1.1"
+dependencies = [
+ "serde",
+]
+
+[[package]]
+name = "piff-wasm"
+version = "0.1.1"
+dependencies = [
+ "piff-core",
+ "piff-pdfium",
+ "piff-semantic",
+ "serde",
+ "serde_json",
+ "wasm-bindgen",
 ]
 
 [[package]]

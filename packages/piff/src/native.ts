@@ -20,6 +20,7 @@ interface NativeDiffOptions {
   dpi?: number
   pageMatching?: 'index' | 'sequence'
   mode?: 'visual' | 'semantic'
+  render?: 'full' | 'none'
   readingOrder?: PdfReadingOrder
   contextLines?: number
   password?: string
@@ -174,6 +175,7 @@ export function toNativeOptions(
     dpi: options.dpi,
     pageMatching: options.pageMatching,
     mode: options.mode,
+    render: options.render,
     readingOrder: options.readingOrder,
     contextLines: options.contextLines,
     password: options.password,

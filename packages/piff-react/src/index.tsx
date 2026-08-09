@@ -724,6 +724,8 @@ function pageWarningMessage(warning: PdfPageWarning): string {
       return 'The PDF page dimensions changed between revisions.'
     case 'semantic-visual-disagreement':
       return 'Visual pixels align, but text extraction reports a difference. Treat the raster proof as authoritative.'
+    case 'visual-not-computed':
+      return 'This result contains semantic evidence only. Request a page preview when you need pixel proof.'
   }
 }
 

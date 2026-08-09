@@ -68,6 +68,7 @@ type RawDocumentReviewItem = Omit<RawTextBlockDiff, 'id'> & {
   before_page?: number | null
   after_page?: number | null
   page_status: PiffResult['pages'][number]['status']
+  side: 'before' | 'after' | 'both'
   block_id: string
 }
 
@@ -490,6 +491,7 @@ interface WasmResult {
   schema_version: number
   engine: RawEngineInfo
   equal: boolean
+  render_mode: 'full' | 'none'
   before_page_count: number
   after_page_count: number
   text_diff?: RawDocumentTextDiff | null
@@ -501,6 +503,7 @@ interface WasmResult {
     after_size?: { width: number; height: number } | null
     width: number
     height: number
+    visual_computed: boolean
     changed_pixels: number
     changed_ratio: number
     alignment: {
@@ -569,6 +572,7 @@ function mapResult(raw: WasmResult): PiffResult {
       pdfiumVersion: raw.engine.pdfium_version ?? undefined,
     },
     equal: raw.equal,
+    renderMode: raw.render_mode,
     before: { pageCount: raw.before_page_count },
     after: { pageCount: raw.after_page_count },
     pages: raw.pages.map((page) => ({
@@ -579,6 +583,7 @@ function mapResult(raw: WasmResult): PiffResult {
       afterSize: page.after_size ?? undefined,
       width: page.width,
       height: page.height,
+      visualComputed: page.visual_computed,
       changedPixels: page.changed_pixels,
       changedRatio: page.changed_ratio,
       alignment: {
@@ -662,6 +667,7 @@ function mapDocumentTextDiff(raw: RawDocumentTextDiff): PdfDocumentTextDiff {
       beforePage: item.before_page ?? undefined,
       afterPage: item.after_page ?? undefined,
       pageStatus: item.page_status,
+      side: item.side,
       blockId: item.block_id,
     } satisfies PdfDocumentReviewItem)),
     pages: raw.pages.map((page) => ({

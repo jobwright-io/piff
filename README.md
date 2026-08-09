@@ -40,14 +40,18 @@ The binary has four commands:
 ```sh
 piff compare before.pdf after.pdf --mode semantic --output report.json
 piff diff before.pdf after.pdf
+piff diff before.pdf after.pdf --format inline
 piff diff before.pdf after.pdf --format json --context-lines 2 --compact
 piff equal before.pdf after.pdf
 piff doctor --pdfium /path/to/libpdfium.so
 ```
 
-`compare` produces the complete visual and semantic report. `diff` produces block-scoped unified
-text hunks or the machine-readable `text_diff` object. `equal` stops at the first difference and
-is suitable for CI. `doctor` verifies the configured PDFium backend.
+`compare` produces the complete visual and semantic report. `diff` defaults to semantic-only
+comparison, so it skips full-page rasterization; use `--render full` when the text diff also needs
+pixel evidence. `--format inline` prints a unified document stream with `[before]`, `[after]`, or
+`[both]` ownership. `--format json` returns the same block-scoped stream as the machine-readable
+`text_diff` object. `equal` stops at the first difference and is suitable for CI. `doctor` verifies
+the configured PDFium backend.
 
 All commands support page matching, DPI, alignment, reading order, passwords, and bounded resource
 flags. Encrypted files can use `--password`, `--before-password`, or `--after-password`. Errors
@@ -70,13 +74,14 @@ import { piff } from '@jobwright-io/piffjs'
 
 const result = await piff(beforePdf, afterPdf, {
   mode: 'semantic',
+  render: 'none',
   pageMatching: 'sequence',
   readingOrder: 'auto',
   contextLines: 2,
 })
 
 for (const operation of result.textDiff?.stream ?? []) {
-  console.log(operation.kind, operation.beforeText, operation.afterText)
+  console.log(operation.kind, operation.side, operation.beforeText, operation.afterText)
 }
 ```
 
@@ -86,8 +91,10 @@ for inline consumers. Every operation carries explicit `beforePage` and `afterPa
 PDF-point bounds, block-scoped line and word hunks, and a deterministic ID.
 
 Additions are anchored only to the after side. Removals are anchored only to the before side.
-Modifications, moves, and reflows carry both sides when both documents contain the block. Repeated
-edge-positioned text can be labeled `header` or `footer`; a single-page heading remains `body`.
+Modifications, moves, and reflows carry both sides when both documents contain the block. The
+result's `renderMode` and each page's `visualComputed` flag make the absence of raster evidence
+explicit. Repeated edge-positioned text can be labeled `header` or `footer`; a single-page heading
+remains `body`.
 
 Use `PiffSession` when previews should be rendered lazily:
 

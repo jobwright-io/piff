@@ -13,7 +13,7 @@ use piff_pdfium::{
     compare_bytes_with_passwords_and_progress, is_equal_bytes_with_passwords_and_progress,
     render_page_diff_png_with_timing, CancellationToken, PageMatching, PdfPasswords,
     PdfRenderRequest, PdfResourceLimits, PiffMode, PiffOptions, PiffResult, PreviewView,
-    ProgressEvent, ProgressPhase, RenderedPagePreview,
+    ProgressEvent, ProgressPhase, RenderMode, RenderedPagePreview,
 };
 use piff_semantic::TextReadingOrder;
 
@@ -51,6 +51,7 @@ pub struct DiffOptionsJs {
     pub context_lines: Option<u32>,
     pub page_matching: Option<String>,
     pub mode: Option<String>,
+    pub render: Option<String>,
     pub reading_order: Option<String>,
     pub password: Option<String>,
     pub before_password: Option<String>,
@@ -499,6 +500,15 @@ fn pdf_options(options: &DiffOptionsJs) -> napi::Result<PiffOptions> {
             )))
         }
     };
+    let render = match options.render.as_deref() {
+        None | Some("full") => RenderMode::Full,
+        Some("none") => RenderMode::None,
+        Some(value) => {
+            return Err(Error::from_reason(format!(
+                "render must be \"full\" or \"none\", got \"{value}\""
+            )))
+        }
+    };
     let reading_order = match options.reading_order.as_deref() {
         None | Some("auto") => TextReadingOrder::Auto,
         Some("rows") => TextReadingOrder::Rows,
@@ -534,6 +544,7 @@ fn pdf_options(options: &DiffOptionsJs) -> napi::Result<PiffOptions> {
         },
         page_matching,
         mode,
+        render,
         reading_order,
         text_context_lines: options
             .context_lines

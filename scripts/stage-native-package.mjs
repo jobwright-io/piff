@@ -18,7 +18,7 @@ const target = required(args, 'target')
 const nativePath = resolve(required(args, 'native'))
 const pdfiumPath = resolve(required(args, 'pdfium'))
 const outputPath = resolve(required(args, 'output'))
-const packageVersion = args.version ?? '0.1.0'
+const packageVersion = args.version ?? '0.1.1'
 
 if (!TARGETS.has(target)) {
   throw new Error(`unsupported target "${target}"; expected one of ${[...TARGETS].join(', ')}`)

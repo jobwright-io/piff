@@ -5,7 +5,7 @@ use piff_core::DiffOptions;
 use piff_pdfium::{
     compare_bytes_with_passwords_and_progress, is_equal_bytes_with_passwords_and_progress,
     render_page_diff_png_with_passwords_and_cancellation, PageMatching, PdfPasswords,
-    PdfRenderRequest, PdfResourceLimits, PiffError, PiffMode, PiffOptions, PreviewView,
+    PdfRenderRequest, PdfResourceLimits, PiffError, PiffMode, PiffOptions, PreviewView, RenderMode,
 };
 use piff_semantic::TextReadingOrder;
 use serde::Deserialize;
@@ -18,6 +18,7 @@ struct WasmDiffOptions {
     dpi: Option<f32>,
     page_matching: Option<String>,
     mode: Option<String>,
+    render: Option<String>,
     reading_order: Option<String>,
     password: Option<String>,
     before_password: Option<String>,
@@ -190,6 +191,15 @@ fn parse_options(options_json: Option<String>) -> Result<(PiffOptions, Passwords
             )))
         }
     };
+    let render = match options.render.as_deref() {
+        None | Some("full") => RenderMode::Full,
+        Some("none") => RenderMode::None,
+        Some(value) => {
+            return Err(JsValue::from_str(&format!(
+                "render must be \"full\" or \"none\", got \"{value}\""
+            )))
+        }
+    };
     let reading_order = match options.reading_order.as_deref() {
         None | Some("auto") => TextReadingOrder::Auto,
         Some("rows") => TextReadingOrder::Rows,
@@ -229,6 +239,7 @@ fn parse_options(options_json: Option<String>) -> Result<(PiffOptions, Passwords
             },
             page_matching,
             mode,
+            render,
             reading_order,
             text_context_lines: options
                 .context_lines

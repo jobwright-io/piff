@@ -304,7 +304,7 @@ for (const fixture of cases) {
   assert.equal(result.schemaVersion, 1)
   assert.deepEqual(result.engine, {
     name: 'piff',
-    version: '0.1.0',
+    version: '0.1.1',
     renderer: 'pdfium',
     binding: 'pdfium-render',
     pdfiumApi: '7881',
@@ -426,6 +426,37 @@ assert.ok(insertedBlock.afterBounds)
 assert.ok(insertedBlock.textDiff.hunks.length > 0)
 assert.ok(blockInsertionResult.textDiff?.pages[0].blocks.some((block) => block.id === insertedBlock.id))
 report.push({ name: 'sdk-side-aware-block-insertion', passed: true })
+
+const semanticOnlyBefore = createTextPdf([['Profile summary.', 'The original document contains stable text.']])
+const semanticOnlyAfter = createTextPdf([['Profile summary.', 'The revised document contains stable text.']])
+const semanticOnlyResult = await piff(
+  semanticOnlyBefore,
+  semanticOnlyAfter,
+  { ...semanticOptions, pageMatching: 'index', render: 'none' },
+)
+assert.equal(semanticOnlyResult.equal, false)
+assert.equal(semanticOnlyResult.renderMode, 'none')
+assert.equal(semanticOnlyResult.pages[0].visualComputed, false)
+assert.equal(semanticOnlyResult.pages[0].changedPixels, 0)
+assert.equal(semanticOnlyResult.pages[0].regions.length, 0)
+assert.equal(semanticOnlyResult.pages[0].warnings.includes('visual-not-computed'), true)
+assert.equal(semanticOnlyResult.stats.renderMs, 0)
+assert.equal(semanticOnlyResult.textDiff?.stream[0]?.side, 'both')
+const semanticOnlySession = await PiffSession.open(
+  semanticOnlyBefore,
+  semanticOnlyAfter,
+  { ...semanticOptions, pageMatching: 'index', render: 'none' },
+)
+try {
+  assert.equal(await semanticOnlySession.isEqual(), false)
+} finally {
+  await semanticOnlySession.close()
+}
+report.push({
+  name: 'sdk-semantic-only-inline-fast-path',
+  passed: true,
+  totalMs: semanticOnlyResult.stats.totalMs,
+})
 
 const structuralResult = await piff(
   createTextPdf([[

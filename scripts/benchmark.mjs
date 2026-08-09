@@ -32,6 +32,23 @@ const cases = [
     },
   },
   {
+    name: 'semantic-text-only',
+    before: createTextPdf([
+      ['Profile summary.', 'The original document contains stable text.', 'Experience.'],
+      ['Education.', 'The candidate has a computer science degree.'],
+    ]),
+    after: createTextPdf([
+      ['Profile summary.', 'The revised document contains stable text.', 'Experience.'],
+      ['Education.', 'The candidate has a computer science degree.'],
+    ]),
+    options: {
+      mode: 'semantic',
+      render: 'none',
+      pageMatching: 'index',
+      readingOrder: 'auto',
+    },
+  },
+  {
     name: 'visual-regions',
     before: createTextPdf([{
       rectangles: [
@@ -125,17 +142,24 @@ async function runCase(fixture) {
     const comparisonStarted = performance.now()
     const result = await session.compare()
     const comparisonWallMs = performance.now() - comparisonStarted
-    const previewStarted = performance.now()
-    const preview = await session.renderPageDiffWithTiming(0, { view: 'diff' })
-    const previewWallMs = performance.now() - previewStarted
+    let previewWallMs = 0
+    let previewEncodeMs = 0
+    let previewBytes = 0
+    if (fixture.options.render !== 'none') {
+      const previewStarted = performance.now()
+      const preview = await session.renderPageDiffWithTiming(0, { view: 'diff' })
+      previewWallMs = performance.now() - previewStarted
+      previewEncodeMs = preview.encodeMs
+      previewBytes = preview.bytes.byteLength
+    }
     return {
       engine: result.engine,
       equal: result.equal,
       stats: result.stats,
       comparisonWallMs,
       previewWallMs,
-      previewEncodeMs: preview.encodeMs,
-      previewBytes: preview.bytes.byteLength,
+      previewEncodeMs,
+      previewBytes,
     }
   } finally {
     await session.close()

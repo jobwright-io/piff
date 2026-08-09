@@ -120,6 +120,7 @@ type RawDocumentReviewItem = Omit<RawTextBlockDiff, 'id'> & {
   before_page?: number | null
   after_page?: number | null
   page_status: PiffResult['pages'][number]['status']
+  side: 'before' | 'after' | 'both'
   block_id: string
 }
 
@@ -140,6 +141,7 @@ interface NativeResult {
   schema_version: number
   engine: NativeEngineInfo
   equal: boolean
+  render_mode: 'full' | 'none'
   before_page_count: number
   after_page_count: number
   text_diff?: RawDocumentTextDiff | null
@@ -157,6 +159,7 @@ interface NativeResult {
     } | null
     width: number
     height: number
+    visual_computed: boolean
     changed_pixels: number
     changed_ratio: number
     alignment: {
@@ -504,6 +507,7 @@ function mapResult(raw: NativeResult): PiffResult {
     schemaVersion: raw.schema_version,
     engine: mapEngine(raw.engine),
     equal: raw.equal,
+    renderMode: raw.render_mode,
     before: { pageCount: raw.before_page_count },
     after: { pageCount: raw.after_page_count },
     pages: raw.pages.map((page) => ({
@@ -514,6 +518,7 @@ function mapResult(raw: NativeResult): PiffResult {
       afterSize: page.after_size ?? undefined,
       width: page.width,
       height: page.height,
+      visualComputed: page.visual_computed,
       changedPixels: page.changed_pixels,
       changedRatio: page.changed_ratio,
       alignment: {
@@ -579,6 +584,7 @@ function mapDocumentTextDiff(raw: RawDocumentTextDiff): PdfDocumentTextDiff {
       beforePage: item.before_page ?? undefined,
       afterPage: item.after_page ?? undefined,
       pageStatus: item.page_status,
+      side: item.side,
       blockId: item.block_id,
     } satisfies PdfDocumentReviewItem)),
     pages: raw.pages.map((page) => ({
@@ -802,6 +808,7 @@ export type {
   PdfResourceLimits,
   PdfSemanticBounds,
   PdfSemanticChangeKind,
+  PdfReviewSide,
   PdfSemanticPageDiff,
   PdfSemanticTextBlockKind,
   PdfSemanticTextBlockRole,

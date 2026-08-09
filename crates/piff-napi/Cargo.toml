@@ -1,6 +1,6 @@
 [package]
 name = "piff-napi"
-version = "0.1.0"
+version = "0.1.1"
 description = "Node and Bun bindings for the piff Rust engine"
 edition.workspace = true
 license.workspace = true
@@ -13,9 +13,9 @@ crate-type = ["cdylib"]
 [dependencies]
 napi = { version = "3.0.0", features = ["serde-json"] }
 napi-derive = "3.0.0"
-piff-core = { path = "../piff-core", version = "0.1.0" }
-piff-pdfium = { path = "../piff-pdfium", version = "0.1.0" }
-piff-semantic = { path = "../piff-semantic", version = "0.1.0" }
+piff-core = { path = "../piff-core", version = "0.1.1" }
+piff-pdfium = { path = "../piff-pdfium", version = "0.1.1" }
+piff-semantic = { path = "../piff-semantic", version = "0.1.1" }
 serde_json.workspace = true
 
 [build-dependencies]

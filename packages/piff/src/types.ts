@@ -21,6 +21,8 @@ export interface PiffOptions {
   dpi?: number
   pageMatching?: 'index' | 'sequence'
   mode?: 'visual' | 'semantic'
+  /** Compute full pixel evidence or semantic text evidence only. Defaults to `full`. */
+  render?: 'full' | 'none'
   /** Use conservative detection, row-major order, or column-major order. Defaults to `auto`. */
   readingOrder?: PdfReadingOrder
   /** Unchanged text lines kept around each changed block. Defaults to 3. */
@@ -156,6 +158,7 @@ export type PdfPageWarning =
   | 'text-changes-truncated'
   | 'page-geometry-changed'
   | 'semantic-visual-disagreement'
+  | 'visual-not-computed'
 
 export interface PdfPageDiff {
   beforePage?: number
@@ -165,6 +168,8 @@ export interface PdfPageDiff {
   afterSize?: PdfPageGeometry
   width: number
   height: number
+  /** False when `render: 'none'` was used and only semantic evidence was computed. */
+  visualComputed: boolean
   changedPixels: number
   changedRatio: number
   alignment: PdfPageAlignment
@@ -175,6 +180,7 @@ export interface PdfPageDiff {
 }
 
 export type PdfSemanticChangeKind = 'added' | 'removed' | 'modified' | 'moved' | 'reflowed'
+export type PdfReviewSide = 'before' | 'after' | 'both'
 
 export interface PdfSemanticBounds {
   x: number
@@ -272,6 +278,8 @@ export interface PdfDocumentReviewItem extends Omit<PdfSemanticTextBlockDiff, 'i
   beforePage?: number
   afterPage?: number
   pageStatus: PdfPageStatus
+  /** Added anchors belong to `after`, removed anchors to `before`, and replacements to `both`. */
+  side: PdfReviewSide
   blockId: string
 }
 
@@ -308,6 +316,8 @@ export interface PiffResult {
   schemaVersion: number
   engine: PdfEngineInfo
   equal: boolean
+  /** Render policy used to produce this result. */
+  renderMode: 'full' | 'none'
   before: PdfDocumentSummary
   after: PdfDocumentSummary
   pages: PdfPageDiff[]

@@ -29,7 +29,7 @@ try {
     ok: true,
     engine: {
       name: 'piff',
-      version: '0.1.0',
+      version: '0.1.1',
       renderer: 'pdfium',
       binding: 'pdfium-render',
       pdfium_api: '7881',
@@ -73,6 +73,13 @@ try {
   assert.match(humanDiff.stdout, /^@@ -\d+ \+\d+ @@$/m)
   assert.match(humanDiff.stdout, /\[-review-\]/)
   assert.match(humanDiff.stdout, /\{\+release\+\}/)
+
+  const inlineDiff = await run(['diff', beforePath, afterPath, '--format', 'inline'])
+  assert.equal(inlineDiff.status, 1)
+  assert.match(inlineDiff.stdout, /\[both\] -/)
+  assert.match(inlineDiff.stdout, /\[both\] \+/)
+  assert.match(inlineDiff.stdout, /\[-review-\]/)
+  assert.match(inlineDiff.stdout, /\{\+release\+\}/)
 
   const machineDiff = await run([
     'diff',

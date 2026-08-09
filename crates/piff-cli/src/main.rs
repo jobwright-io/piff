@@ -8,8 +8,8 @@ use piff_core::DiffOptions;
 use piff_pdfium::{
     check_pdfium, compare_files_with_passwords, default_linux_pdfium_path, engine_info,
     is_equal_bytes_with_passwords_and_progress, PageMatching, PageStatus, PdfEngineInfo,
-    PdfPasswords, PdfResourceLimits, PiffError, PiffMode, PiffOptions, PiffResult,
-    RESULT_SCHEMA_VERSION,
+    PdfPasswords, PdfResourceLimits, PiffError, PiffMode, PiffOptions, PiffResult, RenderMode,
+    ReviewSide, RESULT_SCHEMA_VERSION,
 };
 use piff_semantic::{SemanticChangeKind, TextDiffLineKind, TextReadingOrder};
 use serde::Serialize;
@@ -29,6 +29,12 @@ enum PageMatchingArg {
 enum DiffModeArg {
     Visual,
     Semantic,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum RenderModeArg {
+    Full,
+    None,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -103,6 +109,7 @@ struct DiffCommand {
 #[derive(Debug, Clone, Copy, ValueEnum)]
 enum DiffFormatArg {
     Text,
+    Inline,
     Json,
 }
 
@@ -156,6 +163,9 @@ struct ComparisonSettings {
     /// Pair pages by index or by low-resolution sequence alignment.
     #[arg(long, value_enum, default_value_t = PageMatchingArg::Index)]
     page_matching: PageMatchingArg,
+    /// Compute full pixel evidence or semantic text evidence only. Diff defaults to none.
+    #[arg(long, value_enum)]
+    render: Option<RenderModeArg>,
     /// Interpret positioned text in automatic, row-major, or column-major order.
     #[arg(long, value_enum, default_value_t = ReadingOrderArg::Auto)]
     reading_order: ReadingOrderArg,
@@ -290,7 +300,9 @@ fn run() -> Result<i32, CliError> {
 fn run_compare(command: CompareCommand) -> Result<i32, CliError> {
     let library_path = resolve_library_path(command.settings.pdfium.clone());
     let include_previews = command.preview_dir.is_some();
-    let options = command.settings.to_options(include_previews, command.mode);
+    let options = command
+        .settings
+        .to_options(include_previews, command.mode, RenderModeArg::Full);
     let result = compare_files_with_passwords(
         &command.before,
         &command.after,
@@ -325,7 +337,9 @@ fn run_compare(command: CompareCommand) -> Result<i32, CliError> {
 
 fn run_diff(command: DiffCommand) -> Result<i32, CliError> {
     let library_path = resolve_library_path(command.settings.pdfium.clone());
-    let options = command.settings.to_options(false, DiffModeArg::Semantic);
+    let options = command
+        .settings
+        .to_options(false, DiffModeArg::Semantic, RenderModeArg::None);
     let result = compare_files_with_passwords(
         &command.before,
         &command.after,
@@ -336,6 +350,10 @@ fn run_diff(command: DiffCommand) -> Result<i32, CliError> {
     match command.format {
         DiffFormatArg::Text => {
             let output = render_text_diff(&result, &command.before, &command.after);
+            write_text(&output, command.output.as_deref())?;
+        }
+        DiffFormatArg::Inline => {
+            let output = render_inline_diff(&result, &command.before, &command.after);
             write_text(&output, command.output.as_deref())?;
         }
         DiffFormatArg::Json => {
@@ -354,7 +372,9 @@ fn run_diff(command: DiffCommand) -> Result<i32, CliError> {
 
 fn run_equal(command: EqualCommand) -> Result<i32, CliError> {
     let library_path = resolve_library_path(command.settings.pdfium.clone());
-    let options = command.settings.to_options(false, command.mode);
+    let options = command
+        .settings
+        .to_options(false, command.mode, RenderModeArg::Full);
     let before = read_input(&command.before)?;
     let after = read_input(&command.after)?;
     let equal = is_equal_bytes_with_passwords_and_progress(
@@ -399,7 +419,12 @@ impl ComparisonSettings {
         }
     }
 
-    fn to_options(&self, include_previews: bool, mode: DiffModeArg) -> PiffOptions {
+    fn to_options(
+        &self,
+        include_previews: bool,
+        mode: DiffModeArg,
+        default_render: RenderModeArg,
+    ) -> PiffOptions {
         let default_limits = PdfResourceLimits::default();
         let limits = if self.unlimited_resources {
             PdfResourceLimits::unlimited()
@@ -419,6 +444,10 @@ impl ComparisonSettings {
             mode: match mode {
                 DiffModeArg::Visual => PiffMode::Visual,
                 DiffModeArg::Semantic => PiffMode::Semantic,
+            },
+            render: match self.render.unwrap_or(default_render) {
+                RenderModeArg::Full => RenderMode::Full,
+                RenderModeArg::None => RenderMode::None,
             },
             reading_order: match self.reading_order {
                 ReadingOrderArg::Auto => TextReadingOrder::Auto,
@@ -484,9 +513,10 @@ fn render_text_diff(result: &PiffResult, before: &Path, after: &Path) -> String 
             for item in stream_items {
                 let _ = writeln!(
                     output,
-                    "@@ block {} kind={} structure={:?} before={} after={} @@",
+                    "@@ block {} kind={} side={} structure={:?} before={} after={} @@",
                     item.id,
                     semantic_change_label(item.kind),
+                    review_side_label(item.side),
                     item.structure,
                     item.before_page
                         .map_or_else(|| "-".to_owned(), |value| (value + 1).to_string()),
@@ -538,6 +568,103 @@ fn render_text_diff(result: &PiffResult, before: &Path, after: &Path) -> String 
     output
 }
 
+fn render_inline_diff(result: &PiffResult, before: &Path, after: &Path) -> String {
+    let mut output = String::new();
+    let mut wrote_header = false;
+    for (page_index, page) in result.pages.iter().enumerate() {
+        if matches!(page.status, PageStatus::Equal) {
+            continue;
+        }
+        if !wrote_header {
+            let _ = writeln!(output, "--- {}", before.display());
+            let _ = writeln!(output, "+++ {}", after.display());
+            wrote_header = true;
+        }
+        let before_page = page
+            .before_page
+            .map_or_else(|| "-".to_owned(), |value| (value + 1).to_string());
+        let after_page = page
+            .after_page
+            .map_or_else(|| "-".to_owned(), |value| (value + 1).to_string());
+        let _ = writeln!(
+            output,
+            "@@ page {} before={} after={} status={} @@",
+            page_index + 1,
+            before_page,
+            after_page,
+            page_status_label(page.status),
+        );
+
+        let stream_items = result
+            .text_diff
+            .as_ref()
+            .map(|text_diff| {
+                text_diff
+                    .stream
+                    .iter()
+                    .filter(|item| item.page_index == page_index)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        if !stream_items.is_empty() {
+            for item in stream_items {
+                let _ = writeln!(
+                    output,
+                    "@@ block {} kind={} side={} @@",
+                    item.id,
+                    semantic_change_label(item.kind),
+                    review_side_label(item.side),
+                );
+                for hunk in &item.text_diff.hunks {
+                    let _ = writeln!(output, "@@ -{} +{} @@", hunk.before_start, hunk.after_start);
+                    for line in &hunk.lines {
+                        let side = review_side_label(item.side);
+                        let prefix = match line.kind {
+                            TextDiffLineKind::Context => ' ',
+                            TextDiffLineKind::Added => '+',
+                            TextDiffLineKind::Removed => '-',
+                        };
+                        let _ = writeln!(output, "[{side}] {prefix}{}", render_inline_line(line));
+                    }
+                }
+                if item.text_diff.truncated {
+                    let _ = writeln!(output, "[both] ~ [block text diff truncated]");
+                } else if item.text_diff.hunks.is_empty() {
+                    write_inline_review_item_summary(&mut output, item);
+                }
+            }
+            continue;
+        }
+
+        let Some(semantic) = page.semantic.as_ref() else {
+            let _ = writeln!(output, "[both] ~ [visual evidence only]");
+            continue;
+        };
+        for hunk in &semantic.text_diff.hunks {
+            let _ = writeln!(output, "@@ -{} +{} @@", hunk.before_start, hunk.after_start);
+            for line in &hunk.lines {
+                let side = match line.kind {
+                    TextDiffLineKind::Context => "both",
+                    TextDiffLineKind::Added => "after",
+                    TextDiffLineKind::Removed => "before",
+                };
+                let prefix = match line.kind {
+                    TextDiffLineKind::Context => ' ',
+                    TextDiffLineKind::Added => '+',
+                    TextDiffLineKind::Removed => '-',
+                };
+                let _ = writeln!(output, "[{side}] {prefix}{}", render_inline_line(line));
+            }
+        }
+        if semantic.text_diff.truncated {
+            let _ = writeln!(output, "[both] ~ [text diff truncated by resource limits]");
+        } else if semantic.text_diff.hunks.is_empty() {
+            let _ = writeln!(output, "[both] ~ [visual evidence only]");
+        }
+    }
+    output
+}
+
 fn semantic_change_label(kind: SemanticChangeKind) -> &'static str {
     match kind {
         SemanticChangeKind::Added => "added",
@@ -545,6 +672,14 @@ fn semantic_change_label(kind: SemanticChangeKind) -> &'static str {
         SemanticChangeKind::Modified => "modified",
         SemanticChangeKind::Moved => "moved",
         SemanticChangeKind::Reflowed => "reflowed",
+    }
+}
+
+fn review_side_label(side: ReviewSide) -> &'static str {
+    match side {
+        ReviewSide::Before => "before",
+        ReviewSide::After => "after",
+        ReviewSide::Both => "both",
     }
 }
 
@@ -570,6 +705,39 @@ fn write_review_item_summary(output: &mut String, item: &piff_pdfium::PdfDocumen
         }
         SemanticChangeKind::Moved | SemanticChangeKind::Reflowed => {
             let _ = writeln!(output, "~ [{} block]", semantic_change_label(item.kind));
+        }
+    }
+}
+
+fn write_inline_review_item_summary(
+    output: &mut String,
+    item: &piff_pdfium::PdfDocumentReviewItem,
+) {
+    match item.kind {
+        SemanticChangeKind::Added => {
+            if let Some(text) = item.after_text.as_deref() {
+                let _ = writeln!(output, "[after] +{text}");
+            }
+        }
+        SemanticChangeKind::Removed => {
+            if let Some(text) = item.before_text.as_deref() {
+                let _ = writeln!(output, "[before] -{text}");
+            }
+        }
+        SemanticChangeKind::Modified => {
+            if let Some(text) = item.before_text.as_deref() {
+                let _ = writeln!(output, "[both] -{text}");
+            }
+            if let Some(text) = item.after_text.as_deref() {
+                let _ = writeln!(output, "[both] +{text}");
+            }
+        }
+        SemanticChangeKind::Moved | SemanticChangeKind::Reflowed => {
+            let _ = writeln!(
+                output,
+                "[both] ~ [{} block]",
+                semantic_change_label(item.kind)
+            );
         }
     }
 }

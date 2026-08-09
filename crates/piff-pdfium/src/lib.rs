@@ -96,6 +96,7 @@ pub struct PiffOptions {
     pub diff: DiffOptions,
     pub page_matching: PageMatching,
     pub mode: PiffMode,
+    pub render: RenderMode,
     pub reading_order: TextReadingOrder,
     pub text_context_lines: usize,
     pub include_previews: bool,
@@ -114,6 +115,14 @@ pub enum PiffMode {
     #[default]
     Visual,
     Semantic,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum RenderMode {
+    #[default]
+    Full,
+    None,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -204,6 +213,7 @@ impl Default for PiffOptions {
             diff: DiffOptions::default(),
             page_matching: PageMatching::default(),
             mode: PiffMode::default(),
+            render: RenderMode::default(),
             reading_order: TextReadingOrder::default(),
             text_context_lines: piff_semantic::DEFAULT_TEXT_DIFF_CONTEXT_LINES,
             include_previews: false,
@@ -226,6 +236,8 @@ pub enum PiffError {
     InvalidMaxPagePixels,
     #[error("text_context_lines must be at most {MAX_TEXT_DIFF_CONTEXT_LINES}")]
     InvalidTextContextLines,
+    #[error("render=none requires mode=semantic")]
+    RenderModeRequiresSemantic,
     #[error("{document} PDF is {bytes} bytes, exceeding the {max_bytes}-byte input limit")]
     InputTooLarge {
         document: &'static str,
@@ -288,7 +300,8 @@ impl PiffError {
             | Self::InvalidMaxInputBytes
             | Self::InvalidMaxPages
             | Self::InvalidMaxPagePixels
-            | Self::InvalidTextContextLines => "invalid-options",
+            | Self::InvalidTextContextLines
+            | Self::RenderModeRequiresSemantic => "invalid-options",
             Self::InputTooLarge { .. } => "input-too-large",
             Self::InputMetadata { .. } => "input-metadata",
             Self::PasswordRequired { .. } => "password-required",
@@ -369,6 +382,7 @@ pub enum PageWarning {
     TextChangesTruncated,
     PageGeometryChanged,
     SemanticVisualDisagreement,
+    VisualNotComputed,
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
@@ -394,6 +408,7 @@ pub struct PdfPageDiff {
     pub after_size: Option<PageGeometry>,
     pub width: u32,
     pub height: u32,
+    pub visual_computed: bool,
     pub changed_pixels: u64,
     pub changed_ratio: f32,
     pub alignment: Alignment,
@@ -411,6 +426,7 @@ pub struct PiffResult {
     pub schema_version: u32,
     pub engine: PdfEngineInfo,
     pub equal: bool,
+    pub render_mode: RenderMode,
     pub before_page_count: usize,
     pub after_page_count: usize,
     pub pages: Vec<PdfPageDiff>,
@@ -449,6 +465,7 @@ pub struct PdfDocumentReviewItem {
     pub before_page: Option<usize>,
     pub after_page: Option<usize>,
     pub page_status: PageStatus,
+    pub side: ReviewSide,
     pub block_id: String,
     pub kind: SemanticChangeKind,
     pub structure: SemanticTextBlockKind,
@@ -470,6 +487,15 @@ pub struct PdfDocumentReviewItem {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub after_role: Option<SemanticTextBlockRole>,
     pub text_diff: TextDiff,
+}
+
+/// Which side owns the anchor in an inline document review stream.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ReviewSide {
+    Before,
+    After,
+    Both,
 }
 
 /// Verifies that the configured Pdfium backend can be loaded.
@@ -827,8 +853,34 @@ fn is_equal_loaded_documents(
             .get(before_page as i32)
             .map_err(pdfium_error)?;
         let after_page = after.pages().get(after_page as i32).map_err(pdfium_error)?;
-        if page_geometry(&before_page) != page_geometry(&after_page) {
+        let before_size = page_geometry(&before_page);
+        let after_size = page_geometry(&after_page);
+        if before_size != after_size {
             return Ok(false);
+        }
+        if matches!(options.render, RenderMode::None) {
+            if !compare_semantic_pages(
+                before,
+                after,
+                page_pair,
+                options.reading_order,
+                options.text_context_lines,
+                cancellation,
+                &mut role_evidence,
+            )?
+            .equal
+            {
+                return Ok(false);
+            }
+            report_progress(
+                progress,
+                ProgressEvent {
+                    phase: ProgressPhase::Comparing,
+                    completed: page_index + 1,
+                    total: page_pairs.len(),
+                },
+            );
+            continue;
         }
         let before_image = render_page(
             &before_page,
@@ -1095,6 +1147,9 @@ fn validate_options(options: PiffOptions) -> Result<(), PiffError> {
     }
     if options.text_context_lines > MAX_TEXT_DIFF_CONTEXT_LINES {
         return Err(PiffError::InvalidTextContextLines);
+    }
+    if matches!(options.render, RenderMode::None) && matches!(options.mode, PiffMode::Visual) {
+        return Err(PiffError::RenderModeRequiresSemantic);
     }
     Ok(())
 }
@@ -1456,6 +1511,9 @@ fn compare_documents(
     options: PiffOptions,
     context: ComparisonContext<'_>,
 ) -> Result<PiffResult, PiffError> {
+    if matches!(options.render, RenderMode::None) {
+        return compare_documents_without_rendering(before, after, options, context);
+    }
     let ComparisonContext {
         engine,
         started,
@@ -1625,6 +1683,7 @@ fn compare_documents(
             after_size,
             width: page_diff.width,
             height: page_diff.height,
+            visual_computed: true,
             changed_pixels: page_diff.changed_pixels,
             changed_ratio: page_diff.changed_ratio,
             alignment: page_diff.alignment,
@@ -1649,6 +1708,7 @@ fn compare_documents(
         schema_version: RESULT_SCHEMA_VERSION,
         engine,
         equal,
+        render_mode: options.render,
         before_page_count,
         after_page_count,
         pages,
@@ -1660,6 +1720,155 @@ fn compare_documents(
             render_ms,
             compare_ms,
             region_ms,
+            semantic_ms,
+            total_ms: elapsed_ms(started),
+        },
+    })
+}
+
+fn compare_documents_without_rendering(
+    before: &PdfDocument<'_>,
+    after: &PdfDocument<'_>,
+    options: PiffOptions,
+    context: ComparisonContext<'_>,
+) -> Result<PiffResult, PiffError> {
+    let ComparisonContext {
+        engine,
+        started,
+        load_ms,
+        progress,
+        cancellation,
+    } = context;
+    let before_page_count = before.pages().len().max(0) as usize;
+    let after_page_count = after.pages().len().max(0) as usize;
+    let (page_pairs, fingerprint_ms, matching_ms) =
+        build_page_pairs(before, after, options, progress, cancellation)?;
+    let page_count = page_pairs.len();
+    let mut pages = Vec::with_capacity(page_count);
+    let mut role_evidence = DocumentRoleEvidence::default();
+    let mut semantic_ms = 0.0;
+
+    for (page_index, page_pair) in page_pairs.iter().copied().enumerate() {
+        ensure_not_cancelled(cancellation)?;
+        let before_page = page_pair
+            .before
+            .map(|page_index| before.pages().get(page_index as i32).map_err(pdfium_error))
+            .transpose()?;
+        let after_page = page_pair
+            .after
+            .map(|page_index| after.pages().get(page_index as i32).map_err(pdfium_error))
+            .transpose()?;
+        let before_size = before_page.as_ref().map(page_geometry);
+        let after_size = after_page.as_ref().map(page_geometry);
+        let semantic_started = Instant::now();
+        let semantic = Some(compare_semantic_pages(
+            before,
+            after,
+            page_pair,
+            options.reading_order,
+            options.text_context_lines,
+            cancellation,
+            &mut role_evidence,
+        )?);
+        semantic_ms += elapsed_ms(semantic_started);
+        let semantic_equal = semantic.as_ref().is_some_and(|diff| diff.equal);
+        let geometry_equal = before_size == after_size;
+        let base_status = if page_pair.moved {
+            PageStatus::Moved
+        } else {
+            match (before_page.is_some(), after_page.is_some()) {
+                (true, true) => PageStatus::Modified,
+                (true, false) => PageStatus::Deleted,
+                (false, true) => PageStatus::Inserted,
+                (false, false) => unreachable!("page count is the maximum of both documents"),
+            }
+        };
+        let status = match base_status {
+            PageStatus::Modified if semantic_equal && geometry_equal => PageStatus::Equal,
+            other => other,
+        };
+        let alignment = Alignment {
+            offset_x: 0,
+            offset_y: 0,
+            confidence: 1.0,
+        };
+        let mut warnings = page_warnings(
+            page_pair,
+            before_size,
+            after_size,
+            alignment,
+            false,
+            &[],
+            semantic.as_ref(),
+        );
+        warnings.push(PageWarning::VisualNotComputed);
+        let before_dimensions = before_size
+            .map(|size| page_pixel_dimensions(size, options.dpi, None))
+            .transpose()?;
+        let after_dimensions = after_size
+            .map(|size| page_pixel_dimensions(size, options.dpi, None))
+            .transpose()?;
+        let width = before_dimensions
+            .into_iter()
+            .chain(after_dimensions)
+            .map(|(width, _)| width)
+            .max()
+            .unwrap_or(0);
+        let height = before_dimensions
+            .into_iter()
+            .chain(after_dimensions)
+            .map(|(_, height)| height)
+            .max()
+            .unwrap_or(0);
+
+        report_progress(
+            progress,
+            ProgressEvent {
+                phase: ProgressPhase::Comparing,
+                completed: page_index + 1,
+                total: page_count,
+            },
+        );
+        pages.push(PdfPageDiff {
+            before_page: page_pair.before,
+            after_page: page_pair.after,
+            status,
+            before_size,
+            after_size,
+            width,
+            height,
+            visual_computed: false,
+            changed_pixels: 0,
+            changed_ratio: 0.0,
+            alignment,
+            regions: Vec::new(),
+            figures: Vec::new(),
+            warnings,
+            semantic,
+            preview: RgbaImage::new(0, 0),
+        });
+    }
+
+    annotate_document_block_roles(&mut pages, &role_evidence);
+    let equal = pages
+        .iter()
+        .all(|page| matches!(page.status, PageStatus::Equal));
+    Ok(PiffResult {
+        schema_version: RESULT_SCHEMA_VERSION,
+        engine,
+        equal,
+        render_mode: options.render,
+        before_page_count,
+        after_page_count,
+        text_diff: Some(build_document_text_diff(&pages)),
+        pages,
+        stats: PiffStats {
+            load_ms,
+            fingerprint_ms,
+            matching_ms,
+            render_ms: 0.0,
+            compare_ms: 0.0,
+            region_ms: 0.0,
             semantic_ms,
             total_ms: elapsed_ms(started),
         },
@@ -1909,6 +2118,7 @@ fn document_review_item(
         before_page: page.before_page,
         after_page: page.after_page,
         page_status: page.status,
+        side: review_side(block.kind),
         block_id: block.id.clone(),
         kind: block.kind,
         structure: block.structure,
@@ -1922,6 +2132,16 @@ fn document_review_item(
         before_role: block.before_role,
         after_role: block.after_role,
         text_diff: block.text_diff.clone(),
+    }
+}
+
+fn review_side(kind: SemanticChangeKind) -> ReviewSide {
+    match kind {
+        SemanticChangeKind::Added => ReviewSide::After,
+        SemanticChangeKind::Removed => ReviewSide::Before,
+        SemanticChangeKind::Modified | SemanticChangeKind::Moved | SemanticChangeKind::Reflowed => {
+            ReviewSide::Both
+        }
     }
 }
 
@@ -2360,6 +2580,22 @@ fn page_geometry(page: &PdfPage<'_>) -> PageGeometry {
     }
 }
 
+fn page_pixel_dimensions(
+    geometry: PageGeometry,
+    dpi: f32,
+    max_page_pixels: Option<u64>,
+) -> Result<(u32, u32), PiffError> {
+    let target_width_value = (geometry.width * dpi / 72.0).round().max(1.0);
+    let target_height_value = (geometry.height * dpi / 72.0).round().max(1.0);
+    if target_width_value > i32::MAX as f32 || target_height_value > i32::MAX as f32 {
+        return Err(PiffError::PageDimensionsTooLarge);
+    }
+    let width = target_width_value as u32;
+    let height = target_height_value as u32;
+    ensure_page_pixels(width, height, max_page_pixels)?;
+    Ok((width, height))
+}
+
 fn render_page(
     page: &PdfPage<'_>,
     dpi: f32,
@@ -2367,14 +2603,10 @@ fn render_page(
     max_page_pixels: Option<u64>,
 ) -> Result<RgbaImage, PiffError> {
     ensure_not_cancelled(cancellation)?;
-    let target_width_value = (page.width().value * dpi / 72.0).round().max(1.0);
-    let target_height_value = (page.height().value * dpi / 72.0).round().max(1.0);
-    if target_width_value > i32::MAX as f32 || target_height_value > i32::MAX as f32 {
-        return Err(PiffError::PageDimensionsTooLarge);
-    }
-    let target_width = target_width_value as i32;
-    let target_height = target_height_value as i32;
-    ensure_page_pixels(target_width as u32, target_height as u32, max_page_pixels)?;
+    let (target_width, target_height) =
+        page_pixel_dimensions(page_geometry(page), dpi, max_page_pixels)?;
+    let target_width = target_width as i32;
+    let target_height = target_height as i32;
     if target_height <= MAX_RENDER_TILE_HEIGHT {
         let config = PdfRenderConfig::new()
             .set_target_width(target_width)

@@ -5,6 +5,7 @@ interface NativeDiffOptions {
     dpi?: number;
     pageMatching?: 'index' | 'sequence';
     mode?: 'visual' | 'semantic';
+    render?: 'full' | 'none';
     readingOrder?: 'auto' | 'rows' | 'columns';
     contextLines?: number;
     password?: string;
