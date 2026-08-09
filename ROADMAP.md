@@ -116,12 +116,14 @@ pretends that one revision is globally “old” and another is globally “new�
   distinct revision value; candidate-only additions remain anchored only to their candidate.
 - The native Node/Bun and CLI path loads each revision once when its password policy permits shared
   handles. Progress and cancellation still apply per graph edge.
+- Sequence page fingerprints are cached for the lifetime of the native document-set comparison, so
+  a revision reused by multiple edges is fingerprinted once while matching remains edge-local.
 
-Page fingerprints and semantic extraction remain edge-local. A later cache can share those derived
-artifacts without changing this result model. The browser/WASM fallback still evaluates edges
-through pair calls. Separate adjacent passwords and protected semantic PDFs use the established
-pair-level fallback so password and PDFium retry behavior stays correct. An all-pairs strategy and
-cross-candidate page alignment are also deliberately deferred until real workloads require them.
+Semantic extraction remains edge-local because its output depends on the paired revision context.
+The browser/WASM fallback still evaluates edges through pair calls. Separate adjacent passwords and
+protected semantic PDFs use the established pair-level fallback so password and PDFium retry behavior
+stays correct. An all-pairs strategy and cross-candidate page alignment are also deliberately deferred
+until real workloads require them.
 
 ## Deliberate non-goals
 

@@ -11,7 +11,7 @@ use image::{DynamicImage, ImageFormat, Rgba, RgbaImage};
 use pdfium_render::prelude::*;
 use piff_core::{
     compare_images_with_cancellation, fingerprint_image, pair_page_fingerprints, Alignment,
-    DiffError, DiffOptions, DiffRegion, PagePair,
+    DiffError, DiffOptions, DiffRegion, PageFingerprint, PagePair,
 };
 use piff_semantic::{
     compare_runs_with_extraction_and_options, normalize_text_runs_with_reading_order,
@@ -1210,6 +1210,7 @@ fn compare_document_set_loaded_pairs<'a>(
     load_ms: f64,
     callbacks: DocumentSetCallbacks<'_>,
 ) -> Result<Vec<(usize, usize, PiffResult)>, PiffError> {
+    let mut fingerprint_cache = DocumentSetFingerprintCache::new(documents.len());
     edges
         .iter()
         .enumerate()
@@ -1222,7 +1223,16 @@ fn compare_document_set_loaded_pairs<'a>(
             );
             let edge_progress =
                 document_set_edge_progress(callbacks.progress, edge_index + 1, edges.len());
-            let result = compare_documents(
+            let pairing = build_document_set_page_pairing(
+                &loaded[from_index],
+                &loaded[to_index],
+                pair_options,
+                (from_index, to_index),
+                &mut fingerprint_cache,
+                edge_progress.as_deref(),
+                callbacks.cancellation,
+            )?;
+            let result = compare_documents_with_page_pairing(
                 &loaded[from_index],
                 &loaded[to_index],
                 pair_options,
@@ -1233,6 +1243,7 @@ fn compare_document_set_loaded_pairs<'a>(
                     progress: edge_progress.as_deref(),
                     cancellation: callbacks.cancellation,
                 },
+                pairing,
             )?;
             Ok((from_index, to_index, result))
         })
@@ -1464,10 +1475,10 @@ fn is_equal_loaded_documents(
     progress: Option<&dyn Fn(ProgressEvent)>,
     cancellation: Option<&CancellationToken>,
 ) -> Result<bool, PiffError> {
-    let (page_pairs, _, _) = build_page_pairs(before, after, options, progress, cancellation)?;
+    let pairing = build_page_pairs(before, after, options, progress, cancellation)?;
     let mut role_evidence = DocumentRoleEvidence::default();
 
-    for (page_index, page_pair) in page_pairs.iter().copied().enumerate() {
+    for (page_index, page_pair) in pairing.pairs.iter().copied().enumerate() {
         ensure_not_cancelled(cancellation)?;
         let (Some(before_page), Some(after_page)) = (page_pair.before, page_pair.after) else {
             return Ok(false);
@@ -1504,7 +1515,7 @@ fn is_equal_loaded_documents(
                 ProgressEvent {
                     phase: ProgressPhase::Comparing,
                     completed: page_index + 1,
-                    total: page_pairs.len(),
+                    total: pairing.pairs.len(),
                 },
             );
             continue;
@@ -1526,7 +1537,7 @@ fn is_equal_loaded_documents(
             ProgressEvent {
                 phase: ProgressPhase::Rendering,
                 completed: page_index + 1,
-                total: page_pairs.len(),
+                total: pairing.pairs.len(),
             },
         );
         if !compare_images_with_cancellation(&before_image, &after_image, options.diff, || {
@@ -1555,7 +1566,7 @@ fn is_equal_loaded_documents(
             ProgressEvent {
                 phase: ProgressPhase::Comparing,
                 completed: page_index + 1,
-                total: page_pairs.len(),
+                total: pairing.pairs.len(),
             },
         );
     }
@@ -1672,15 +1683,14 @@ pub fn render_page_diff_png_with_timing(
     with_pdfium(library_path, |pdfium| {
         let before = load_pdf_from_bytes(pdfium, before_bytes, request.passwords.before, "before")?;
         let after = load_pdf_from_bytes(pdfium, after_bytes, request.passwords.after, "after")?;
-        let (page_pairs, _, _) =
-            build_page_pairs(&before, &after, options, None, request.cancellation)?;
-        if page_index >= page_pairs.len() {
+        let pairing = build_page_pairs(&before, &after, options, None, request.cancellation)?;
+        if page_index >= pairing.pairs.len() {
             return Err(PiffError::PageIndexOutOfBounds {
                 page_index,
-                page_count: page_pairs.len(),
+                page_count: pairing.pairs.len(),
             });
         }
-        let page_pair = page_pairs[page_index];
+        let page_pair = pairing.pairs[page_index];
 
         let before_image = if let Some(before_page) = page_pair.before {
             Some(render_page(
@@ -2132,14 +2142,37 @@ struct ComparisonContext<'a> {
     cancellation: Option<&'a CancellationToken>,
 }
 
+struct PagePairing {
+    pairs: Vec<PagePair>,
+    fingerprint_ms: f64,
+    matching_ms: f64,
+}
+
 fn compare_documents(
     before: &PdfDocument<'_>,
     after: &PdfDocument<'_>,
     options: PiffOptions,
     context: ComparisonContext<'_>,
 ) -> Result<PiffResult, PiffError> {
+    let pairing = build_page_pairs(
+        before,
+        after,
+        options,
+        context.progress,
+        context.cancellation,
+    )?;
+    compare_documents_with_page_pairing(before, after, options, context, pairing)
+}
+
+fn compare_documents_with_page_pairing(
+    before: &PdfDocument<'_>,
+    after: &PdfDocument<'_>,
+    options: PiffOptions,
+    context: ComparisonContext<'_>,
+    pairing: PagePairing,
+) -> Result<PiffResult, PiffError> {
     if matches!(options.render, RenderMode::None) {
-        return compare_documents_without_rendering(before, after, options, context);
+        return compare_documents_without_rendering(before, after, options, context, pairing);
     }
     let ComparisonContext {
         engine,
@@ -2148,11 +2181,14 @@ fn compare_documents(
         progress,
         cancellation,
     } = context;
+    let PagePairing {
+        pairs: page_pairs,
+        fingerprint_ms,
+        matching_ms,
+    } = pairing;
     ensure_not_cancelled(cancellation)?;
     let before_page_count = before.pages().len().max(0) as usize;
     let after_page_count = after.pages().len().max(0) as usize;
-    let (page_pairs, fingerprint_ms, matching_ms) =
-        build_page_pairs(before, after, options, progress, cancellation)?;
     let page_count = page_pairs.len();
     let mut pages = Vec::with_capacity(page_count);
     let mut role_evidence = DocumentRoleEvidence::default();
@@ -2358,6 +2394,7 @@ fn compare_documents_without_rendering(
     after: &PdfDocument<'_>,
     options: PiffOptions,
     context: ComparisonContext<'_>,
+    pairing: PagePairing,
 ) -> Result<PiffResult, PiffError> {
     let ComparisonContext {
         engine,
@@ -2366,10 +2403,13 @@ fn compare_documents_without_rendering(
         progress,
         cancellation,
     } = context;
+    let PagePairing {
+        pairs: page_pairs,
+        fingerprint_ms,
+        matching_ms,
+    } = pairing;
     let before_page_count = before.pages().len().max(0) as usize;
     let after_page_count = after.pages().len().max(0) as usize;
-    let (page_pairs, fingerprint_ms, matching_ms) =
-        build_page_pairs(before, after, options, progress, cancellation)?;
     let page_count = page_pairs.len();
     let mut pages = Vec::with_capacity(page_count);
     let mut role_evidence = DocumentRoleEvidence::default();
@@ -3384,25 +3424,14 @@ fn build_page_pairs(
     options: PiffOptions,
     progress: Option<&dyn Fn(ProgressEvent)>,
     cancellation: Option<&CancellationToken>,
-) -> Result<(Vec<PagePair>, f64, f64), PiffError> {
+) -> Result<PagePairing, PiffError> {
     ensure_not_cancelled(cancellation)?;
     let before_page_count = before.pages().len().max(0) as usize;
     let after_page_count = after.pages().len().max(0) as usize;
     ensure_page_limit("before", before_page_count, options.limits.max_pages)?;
     ensure_page_limit("after", after_page_count, options.limits.max_pages)?;
     if matches!(options.page_matching, PageMatching::Index) {
-        let page_count = before_page_count.max(after_page_count);
-        return Ok((
-            (0..page_count)
-                .map(|page_index| PagePair {
-                    before: (page_index < before_page_count).then_some(page_index),
-                    after: (page_index < after_page_count).then_some(page_index),
-                    moved: false,
-                })
-                .collect(),
-            0.0,
-            0.0,
-        ));
+        return Ok(index_page_pairing(before_page_count, after_page_count));
     }
 
     let fingerprint_started = Instant::now();
@@ -3423,7 +3452,116 @@ fn build_page_pairs(
     let fingerprint_ms = elapsed_ms(fingerprint_started);
     let matching_started = Instant::now();
     let pairs = pair_page_fingerprints(&before_fingerprints, &after_fingerprints);
-    Ok((pairs, fingerprint_ms, elapsed_ms(matching_started)))
+    Ok(PagePairing {
+        pairs,
+        fingerprint_ms,
+        matching_ms: elapsed_ms(matching_started),
+    })
+}
+
+fn index_page_pairing(before_page_count: usize, after_page_count: usize) -> PagePairing {
+    let page_count = before_page_count.max(after_page_count);
+    PagePairing {
+        pairs: (0..page_count)
+            .map(|page_index| PagePair {
+                before: (page_index < before_page_count).then_some(page_index),
+                after: (page_index < after_page_count).then_some(page_index),
+                moved: false,
+            })
+            .collect(),
+        fingerprint_ms: 0.0,
+        matching_ms: 0.0,
+    }
+}
+
+struct DocumentSetFingerprintCache {
+    fingerprints: Vec<Option<Arc<Vec<PageFingerprint>>>>,
+}
+
+impl DocumentSetFingerprintCache {
+    fn new(document_count: usize) -> Self {
+        Self {
+            fingerprints: vec![None; document_count],
+        }
+    }
+
+    fn fingerprints_for(
+        &mut self,
+        document_index: usize,
+        document: &PdfDocument<'_>,
+        page_count: usize,
+        progress: Option<&dyn Fn(ProgressEvent)>,
+        cancellation: Option<&CancellationToken>,
+        max_page_pixels: Option<u64>,
+    ) -> Result<(Arc<Vec<PageFingerprint>>, f64), PiffError> {
+        ensure_not_cancelled(cancellation)?;
+        if let Some(fingerprints) = self
+            .fingerprints
+            .get(document_index)
+            .and_then(Option::as_ref)
+        {
+            return Ok((Arc::clone(fingerprints), 0.0));
+        }
+
+        let started = Instant::now();
+        let fingerprints = Arc::new(render_fingerprints(
+            document,
+            page_count,
+            progress,
+            cancellation,
+            max_page_pixels,
+        )?);
+        let fingerprint_ms = elapsed_ms(started);
+        self.fingerprints[document_index] = Some(Arc::clone(&fingerprints));
+        Ok((fingerprints, fingerprint_ms))
+    }
+}
+
+fn build_document_set_page_pairing(
+    before: &PdfDocument<'_>,
+    after: &PdfDocument<'_>,
+    options: PiffOptions,
+    revision_indices: (usize, usize),
+    fingerprint_cache: &mut DocumentSetFingerprintCache,
+    progress: Option<&dyn Fn(ProgressEvent)>,
+    cancellation: Option<&CancellationToken>,
+) -> Result<PagePairing, PiffError> {
+    ensure_not_cancelled(cancellation)?;
+    let before_page_count = before.pages().len().max(0) as usize;
+    let after_page_count = after.pages().len().max(0) as usize;
+    ensure_page_limit("before", before_page_count, options.limits.max_pages)?;
+    ensure_page_limit("after", after_page_count, options.limits.max_pages)?;
+    if matches!(options.page_matching, PageMatching::Index) {
+        return Ok(index_page_pairing(before_page_count, after_page_count));
+    }
+
+    let (before_index, after_index) = revision_indices;
+    let (before_fingerprints, before_fingerprint_ms) = fingerprint_cache.fingerprints_for(
+        before_index,
+        before,
+        before_page_count,
+        progress,
+        cancellation,
+        options.limits.max_page_pixels,
+    )?;
+    let (after_fingerprints, after_fingerprint_ms) = fingerprint_cache.fingerprints_for(
+        after_index,
+        after,
+        after_page_count,
+        progress,
+        cancellation,
+        options.limits.max_page_pixels,
+    )?;
+    let matching_started = Instant::now();
+    let pairs = pair_page_fingerprints(
+        before_fingerprints.as_slice(),
+        after_fingerprints.as_slice(),
+    );
+    Ok(PagePairing {
+        pairs,
+        fingerprint_ms: before_fingerprint_ms + after_fingerprint_ms,
+        matching_ms: elapsed_ms(matching_started),
+    })
 }
 
 fn render_fingerprints(
@@ -3432,7 +3570,7 @@ fn render_fingerprints(
     progress: Option<&dyn Fn(ProgressEvent)>,
     cancellation: Option<&CancellationToken>,
     max_page_pixels: Option<u64>,
-) -> Result<Vec<piff_core::PageFingerprint>, PiffError> {
+) -> Result<Vec<PageFingerprint>, PiffError> {
     let mut fingerprints = Vec::with_capacity(page_count);
     for page_index in 0..page_count {
         ensure_not_cancelled(cancellation)?;

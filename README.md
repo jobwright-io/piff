@@ -155,7 +155,9 @@ try {
 
 `result.stats` reports fractional millisecond timings for loading, page fingerprinting, page
 matching, raster rendering, pixel and figure comparison, region detection, semantic extraction,
-and the complete comparison. `result.engine` identifies the Piff runtime, the compiled PDFium API,
+and the complete comparison. For native document-set sequence comparisons, a revision's low-resolution
+page fingerprints are reused across edges; semantic extraction remains pair-specific. `result.engine`
+identifies the Piff runtime, the compiled PDFium API,
 and the exact PDFium artifact version when the loaded library ships a `VERSION` sidecar. Run the
 local benchmark with `pnpm benchmark -- --json`; its report separates preview wall time from native
 PNG encoding time.

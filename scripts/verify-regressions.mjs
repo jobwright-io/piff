@@ -715,6 +715,11 @@ try {
   ])
   assert.ok(progressEvents.some((event) => event.phase === 'loading'))
   assert.ok(progressEvents.some((event) => event.phase === 'fingerprinting'))
+  assert.equal(
+    progressEvents.filter((event) => event.phase === 'fingerprinting').length,
+    4,
+    'shared document-set fingerprints are rendered once per revision page',
+  )
   assert.ok(progressEvents.some((event) => event.phase === 'comparing'))
   assert.ok(progressEvents.every((event) => event.comparisonTotal === 2))
   assert.ok(progressEvents.some((event) => (
