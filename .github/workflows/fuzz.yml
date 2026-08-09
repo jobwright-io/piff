@@ -43,7 +43,7 @@ jobs:
         run: cargo install cargo-fuzz --locked
 
       - name: Download pinned PDFium
-        run: node scripts/download-pdfium.mjs --target linux-x64-gnu --tag "$PDFIUM_RELEASE_TAG" --output artifacts/pdfium
+        run: node scripts/download-pdfium.mjs --target linux-x64-gnu --tag "$PDFIUM_RELEASE_TAG" --output artifacts/pdfium/linux-x64
 
       - name: Run fuzz campaign
         run: pnpm fuzz -- --target all --seconds "${{ github.event.inputs.seconds || '300' }}"

@@ -117,7 +117,7 @@ jobs:
         run: cargo build --locked --package piff-napi --release
 
       - name: Download pinned PDFium
-        run: node scripts/download-pdfium.mjs --target linux-x64-gnu --tag "$PDFIUM_RELEASE_TAG" --output artifacts/pdfium
+        run: node scripts/download-pdfium.mjs --target linux-x64-gnu --tag "$PDFIUM_RELEASE_TAG" --output artifacts/pdfium/linux-x64
 
       - name: Stage native SDK binding
         run: node scripts/copy-native-module.mjs --target-dir target/release --output "$PIFF_NATIVE_MODULE"
