@@ -1,4 +1,4 @@
-# piff-wasm
+# @jobwright-io/piff-wasm
 
 This package adapts the generated `piff-wasm` wasm-bindgen module. It does not ship PDFium.
 

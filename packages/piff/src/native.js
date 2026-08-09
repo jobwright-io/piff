@@ -14,11 +14,11 @@ export function loadNativeBinding() {
     const localModule = resolve(projectRoot, 'artifacts/piff.linux-x64-gnu.node');
     const packageNames = [
         runtimePackageName(),
-        'piffjs-linux-x64-gnu',
-        'piffjs-linux-arm64-gnu',
-        'piffjs-darwin-x64',
-        'piffjs-darwin-arm64',
-        'piffjs-win32-x64-msvc',
+        '@jobwright-io/piffjs-linux-x64-gnu',
+        '@jobwright-io/piffjs-linux-arm64-gnu',
+        '@jobwright-io/piffjs-darwin-x64',
+        '@jobwright-io/piffjs-darwin-arm64',
+        '@jobwright-io/piffjs-win32-x64-msvc',
     ].filter((name, index, names) => name !== undefined && names.indexOf(name) === index);
     const candidates = [
         ...(override === undefined ? [] : [override]),
@@ -38,7 +38,7 @@ export function loadNativeBinding() {
 }
 function runtimePackageName() {
     const target = runtimeTarget();
-    return target === undefined ? undefined : `piffjs-${target}`;
+    return target === undefined ? undefined : `@jobwright-io/piffjs-${target}`;
 }
 function runtimeTarget() {
     const arch = process.arch === 'x64'

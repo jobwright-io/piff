@@ -13,7 +13,7 @@ import type {
   PdfSemanticTextBlockKind,
   PdfSemanticTextBlockRole,
   PdfSemanticTextBlockDiff,
-} from 'piffjs'
+} from '@jobwright-io/piffjs'
 
 type RawTextExtractionSummary = {
   status: PdfTextExtractionStatus

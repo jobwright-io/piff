@@ -6,9 +6,9 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "build": "pnpm run build:core && pnpm run build:react && pnpm run build:wasm",
-    "build:core": "pnpm --filter piffjs build",
-    "build:react": "pnpm --filter piff-react build",
-    "build:wasm": "pnpm --filter piff-wasm build",
+    "build:core": "pnpm --filter @jobwright-io/piffjs build",
+    "build:react": "pnpm --filter @jobwright-io/piff-react build",
+    "build:wasm": "pnpm --filter @jobwright-io/piff-wasm build",
     "build:wasm-runtime": "node scripts/build-wasm.mjs",
     "verify:cli": "cargo build --locked -p piff && node scripts/verify-cli.mjs",
     "verify:regressions": "node scripts/verify-regressions.mjs",

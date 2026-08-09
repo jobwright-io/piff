@@ -24,7 +24,7 @@ if (!TARGETS.has(target)) {
 await assertFile(nativePath, 'native module')
 await assertFile(pdfiumPath, 'PDFium library')
 
-const packageName = `piffjs-${target}`
+const packageName = `@jobwright-io/piffjs-${target}`
 const nativeFile = `piff_napi.${target}.node`
 const pdfiumFile = basename(pdfiumPath)
 const packagePdfiumPath = join(outputPath, 'pdfium', pdfiumFile)
@@ -52,11 +52,11 @@ await writeFile(
   `${JSON.stringify({
     name: packageName,
     version: packageVersion,
-    description: `Native piffjs runtime for ${target}`,
+    description: `Native @jobwright-io/piffjs runtime for ${target}`,
     license: 'MIT OR Apache-2.0',
     repository: {
       type: 'git',
-      url: 'https://github.com/jobwright-io/piff.git',
+      url: 'https://github.com/jobwright-io/piffjs.git',
     },
     type: 'commonjs',
     main: 'index.js',

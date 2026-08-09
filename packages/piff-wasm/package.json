@@ -1,5 +1,5 @@
 {
-  "name": "piff-wasm",
+  "name": "@jobwright-io/piff-wasm",
   "version": "0.1.0",
   "private": true,
   "license": "MIT OR Apache-2.0",
@@ -16,6 +16,6 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "piffjs": "workspace:*"
+    "@jobwright-io/piffjs": "workspace:*"
   }
 }

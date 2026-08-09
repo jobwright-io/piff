@@ -1,9 +1,9 @@
-# piff-react
+# @jobwright-io/piff-react
 
 React presentation for the serializable `piff` result. The viewer keeps the native layer out of React: callers provide a preview loader, and page images are requested only as cards approach the viewport.
 
 ```tsx
-import { PiffSession } from 'piffjs'
+import { PiffSession } from '@jobwright-io/piffjs'
 import { PiffViewer } from 'piff-react'
 import 'piff-react/style.css'
 

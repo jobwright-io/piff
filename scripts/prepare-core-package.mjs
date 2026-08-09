@@ -19,7 +19,7 @@ await cp(join(source, 'dist'), join(output, 'dist'), { recursive: true })
 
 packageJson.private = false
 packageJson.optionalDependencies = Object.fromEntries(
-  TARGETS.map((target) => [`piffjs-${target}`, packageJson.version]),
+  TARGETS.map((target) => [`@jobwright-io/piffjs-${target}`, packageJson.version]),
 )
 packageJson.publishConfig = { ...(packageJson.publishConfig ?? {}), access: 'public' }
 

@@ -22,7 +22,7 @@ import type {
   PdfSemanticTextChange,
   PdfTextDiffHunk,
   PdfTextDiffLine,
-} from 'piffjs'
+} from '@jobwright-io/piffjs'
 
 export interface PiffPreviewRequest {
   view: PdfPagePreviewView

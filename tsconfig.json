@@ -11,7 +11,7 @@
     "types": ["node", "react", "react-dom"],
     "baseUrl": ".",
     "paths": {
-      "piffjs": ["packages/piff/src/index.ts"]
+      "@jobwright-io/piffjs": ["packages/piff/src/index.ts"]
     }
   },
   "include": ["packages/**/*.ts", "packages/**/*.tsx"]
