@@ -19,8 +19,10 @@
     "promote:fuzz": "node scripts/promote-fuzz-artifact.mjs",
     "benchmark": "node scripts/benchmark.mjs",
     "stage:native": "node scripts/stage-native-package.mjs",
+    "stage:cli": "node scripts/stage-cli-package.mjs",
     "download:pdfium": "node scripts/download-pdfium.mjs",
     "copy:native": "node scripts/copy-native-module.mjs",
+    "verify:cli-package": "node scripts/verify-cli-package.mjs",
     "prepare:core-release": "node scripts/prepare-core-package.mjs",
     "publish:native": "node scripts/publish-native-packages.mjs"
   },

@@ -1007,10 +1007,18 @@ fn page_status_label(status: PageStatus) -> &'static str {
 }
 
 fn resolve_library_path(explicit: Option<PathBuf>) -> Option<PathBuf> {
-    explicit.or_else(|| {
+    explicit.or_else(default_packaged_pdfium_path).or_else(|| {
         let default_path = default_linux_pdfium_path();
         default_path.exists().then_some(default_path)
     })
+}
+
+fn default_packaged_pdfium_path() -> Option<PathBuf> {
+    let executable_directory = std::env::current_exe().ok()?.parent()?.to_owned();
+    ["libpdfium.so", "libpdfium.dylib", "pdfium.dll"]
+        .into_iter()
+        .map(|library| executable_directory.join("pdfium").join(library))
+        .find(|path| path.is_file())
 }
 
 fn read_input(path: &Path) -> Result<Vec<u8>, CliError> {

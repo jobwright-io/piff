@@ -1211,6 +1211,7 @@ fn compare_document_set_loaded_pairs<'a>(
     callbacks: DocumentSetCallbacks<'_>,
 ) -> Result<Vec<(usize, usize, PiffResult)>, PiffError> {
     let mut fingerprint_cache = DocumentSetFingerprintCache::new(documents.len());
+    let mut semantic_cache = DocumentSetSemanticCache::new(documents.len(), options.reading_order);
     edges
         .iter()
         .enumerate()
@@ -1232,7 +1233,14 @@ fn compare_document_set_loaded_pairs<'a>(
                 edge_progress.as_deref(),
                 callbacks.cancellation,
             )?;
-            let result = compare_documents_with_page_pairing(
+            let semantic_context = matches!(pair_options.mode, PiffMode::Semantic).then(|| {
+                DocumentSetSemanticContext {
+                    cache: &mut semantic_cache,
+                    before_index: from_index,
+                    after_index: to_index,
+                }
+            });
+            let result = compare_documents_with_page_pairing_and_semantic_cache(
                 &loaded[from_index],
                 &loaded[to_index],
                 pair_options,
@@ -1244,6 +1252,7 @@ fn compare_document_set_loaded_pairs<'a>(
                     cancellation: callbacks.cancellation,
                 },
                 pairing,
+                semantic_context,
             )?;
             Ok((from_index, to_index, result))
         })
@@ -2171,8 +2180,28 @@ fn compare_documents_with_page_pairing(
     context: ComparisonContext<'_>,
     pairing: PagePairing,
 ) -> Result<PiffResult, PiffError> {
+    compare_documents_with_page_pairing_and_semantic_cache(
+        before, after, options, context, pairing, None,
+    )
+}
+
+fn compare_documents_with_page_pairing_and_semantic_cache(
+    before: &PdfDocument<'_>,
+    after: &PdfDocument<'_>,
+    options: PiffOptions,
+    context: ComparisonContext<'_>,
+    pairing: PagePairing,
+    mut semantic_context: Option<DocumentSetSemanticContext<'_>>,
+) -> Result<PiffResult, PiffError> {
     if matches!(options.render, RenderMode::None) {
-        return compare_documents_without_rendering(before, after, options, context, pairing);
+        return compare_documents_without_rendering(
+            before,
+            after,
+            options,
+            context,
+            pairing,
+            semantic_context,
+        );
     }
     let ComparisonContext {
         engine,
@@ -2288,15 +2317,26 @@ fn compare_documents_with_page_pairing(
 
         let semantic_started = Instant::now();
         let semantic = if matches!(options.mode, PiffMode::Semantic) {
-            Some(compare_semantic_pages(
-                before,
-                after,
-                page_pair,
-                options.reading_order,
-                options.text_context_lines,
-                cancellation,
-                &mut role_evidence,
-            )?)
+            Some(match semantic_context.as_mut() {
+                Some(context) => compare_semantic_pages_with_cache(
+                    before_page.as_ref(),
+                    after_page.as_ref(),
+                    page_pair,
+                    options.text_context_lines,
+                    cancellation,
+                    &mut role_evidence,
+                    context,
+                )?,
+                None => compare_semantic_pages(
+                    before,
+                    after,
+                    page_pair,
+                    options.reading_order,
+                    options.text_context_lines,
+                    cancellation,
+                    &mut role_evidence,
+                )?,
+            })
         } else {
             None
         };
@@ -2395,6 +2435,7 @@ fn compare_documents_without_rendering(
     options: PiffOptions,
     context: ComparisonContext<'_>,
     pairing: PagePairing,
+    mut semantic_context: Option<DocumentSetSemanticContext<'_>>,
 ) -> Result<PiffResult, PiffError> {
     let ComparisonContext {
         engine,
@@ -2428,15 +2469,26 @@ fn compare_documents_without_rendering(
         let before_size = before_page.as_ref().map(page_geometry);
         let after_size = after_page.as_ref().map(page_geometry);
         let semantic_started = Instant::now();
-        let semantic = Some(compare_semantic_pages(
-            before,
-            after,
-            page_pair,
-            options.reading_order,
-            options.text_context_lines,
-            cancellation,
-            &mut role_evidence,
-        )?);
+        let semantic = Some(match semantic_context.as_mut() {
+            Some(context) => compare_semantic_pages_with_cache(
+                before_page.as_ref(),
+                after_page.as_ref(),
+                page_pair,
+                options.text_context_lines,
+                cancellation,
+                &mut role_evidence,
+                context,
+            )?,
+            None => compare_semantic_pages(
+                before,
+                after,
+                page_pair,
+                options.reading_order,
+                options.text_context_lines,
+                cancellation,
+                &mut role_evidence,
+            )?,
+        });
         semantic_ms += elapsed_ms(semantic_started);
         let semantic_equal = semantic.as_ref().is_some_and(|diff| diff.equal);
         let geometry_equal = before_size == after_size;
@@ -3517,6 +3569,62 @@ impl DocumentSetFingerprintCache {
     }
 }
 
+struct CachedTextPage {
+    runs: Vec<TextRun>,
+    extraction: TextExtractionSummary,
+}
+
+struct DocumentSetSemanticCache {
+    pages: Vec<Vec<Option<Arc<CachedTextPage>>>>,
+    reading_order: TextReadingOrder,
+}
+
+struct DocumentSetSemanticContext<'a> {
+    cache: &'a mut DocumentSetSemanticCache,
+    before_index: usize,
+    after_index: usize,
+}
+
+impl DocumentSetSemanticCache {
+    fn new(document_count: usize, reading_order: TextReadingOrder) -> Self {
+        Self {
+            pages: (0..document_count).map(|_| Vec::new()).collect(),
+            reading_order,
+        }
+    }
+
+    fn page(
+        &mut self,
+        document_index: usize,
+        page_index: usize,
+        page: &PdfPage<'_>,
+        cancellation: Option<&CancellationToken>,
+    ) -> Result<Arc<CachedTextPage>, PiffError> {
+        ensure_not_cancelled(cancellation)?;
+        if let Some(cached) = self
+            .pages
+            .get(document_index)
+            .and_then(|pages| pages.get(page_index))
+            .and_then(Option::as_ref)
+        {
+            return Ok(Arc::clone(cached));
+        }
+
+        let (runs, extraction) = extract_text_runs(page, self.reading_order, cancellation)?;
+        let cached = Arc::new(CachedTextPage { runs, extraction });
+        let pages = self.pages.get_mut(document_index).ok_or_else(|| {
+            PiffError::InvalidDocumentSet(format!(
+                "semantic cache document index {document_index} is out of bounds"
+            ))
+        })?;
+        if pages.len() <= page_index {
+            pages.resize_with(page_index + 1, || None);
+        }
+        pages[page_index] = Some(Arc::clone(&cached));
+        Ok(cached)
+    }
+}
+
 fn build_document_set_page_pairing(
     before: &PdfDocument<'_>,
     after: &PdfDocument<'_>,
@@ -3616,6 +3724,72 @@ fn ensure_not_cancelled(cancellation: Option<&CancellationToken>) -> Result<(), 
     } else {
         Ok(())
     }
+}
+
+fn compare_semantic_pages_with_cache(
+    before_page: Option<&PdfPage<'_>>,
+    after_page: Option<&PdfPage<'_>>,
+    page_pair: PagePair,
+    text_context_lines: usize,
+    cancellation: Option<&CancellationToken>,
+    role_evidence: &mut DocumentRoleEvidence,
+    context: &mut DocumentSetSemanticContext<'_>,
+) -> Result<SemanticPageDiff, PiffError> {
+    let before_extracted = match (page_pair.before, before_page) {
+        (Some(page_index), Some(page)) => Some(context.cache.page(
+            context.before_index,
+            page_index,
+            page,
+            cancellation,
+        )?),
+        _ => None,
+    };
+    let after_extracted = match (page_pair.after, after_page) {
+        (Some(page_index), Some(page)) => Some(context.cache.page(
+            context.after_index,
+            page_index,
+            page,
+            cancellation,
+        )?),
+        _ => None,
+    };
+    let before_runs = before_extracted
+        .as_ref()
+        .map_or(&[][..], |page| page.runs.as_slice());
+    let after_runs = after_extracted
+        .as_ref()
+        .map_or(&[][..], |page| page.runs.as_slice());
+    let before_extraction = before_extracted
+        .as_ref()
+        .map_or_else(TextExtractionSummary::empty, |page| page.extraction.clone());
+    let after_extraction = after_extracted
+        .as_ref()
+        .map_or_else(TextExtractionSummary::empty, |page| page.extraction.clone());
+    if let (Some(page_index), Some(page)) = (page_pair.before, before_page) {
+        record_role_evidence(
+            &mut role_evidence.before,
+            page_index,
+            before_runs,
+            page_geometry(page),
+        );
+    }
+    if let (Some(page_index), Some(page)) = (page_pair.after, after_page) {
+        record_role_evidence(
+            &mut role_evidence.after,
+            page_index,
+            after_runs,
+            page_geometry(page),
+        );
+    }
+    Ok(compare_runs_with_extraction_and_options(
+        before_runs,
+        after_runs,
+        before_extraction,
+        after_extraction,
+        TextDiffOptions {
+            context_lines: text_context_lines,
+        },
+    ))
 }
 
 fn compare_semantic_pages(

@@ -156,7 +156,8 @@ try {
 `result.stats` reports fractional millisecond timings for loading, page fingerprinting, page
 matching, raster rendering, pixel and figure comparison, region detection, semantic extraction,
 and the complete comparison. For native document-set sequence comparisons, a revision's low-resolution
-page fingerprints are reused across edges; semantic extraction remains pair-specific. `result.engine`
+page fingerprints and extracted page runs are reused across edges; semantic block matching remains
+pair-specific. `result.engine`
 identifies the Piff runtime, the compiled PDFium API,
 and the exact PDFium artifact version when the loaded library ships a `VERSION` sidecar. Run the
 local benchmark with `pnpm benchmark -- --json`; its report separates preview wall time from native
@@ -243,8 +244,10 @@ GitHub Packages, and the Rust crates. It runs for a published GitHub release or 
 `workflow_dispatch` run with `publish` enabled. GitHub Packages publishing uses the workflow's
 scoped `GITHUB_TOKEN`; only the crates.io registry secret is needed. The
 React and browser adapter packages remain private until they have their own release contract. The
-initial native release targets glibc Linux, macOS, and Windows; musl Linux support remains a separate
-cross-compilation task. Native packages include PDFium and third-party license notices under
+native release targets glibc Linux, macOS, and Windows; musl Linux support remains a separate
+cross-compilation task. GitHub Releases also receive standalone `piff` CLI archives for those
+platforms. The CLI discovers the bundled PDFium library from its adjacent `pdfium/` directory.
+Native packages and CLI archives include PDFium and third-party license notices under
 `licenses/`. Each staged native package also includes `pdfium/VERSION` and a deterministic
 `artifact-manifest.json` containing file sizes and SHA-256 checksums; release CI verifies the
 manifest against the pinned PDFium build before publication.

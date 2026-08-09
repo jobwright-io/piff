@@ -100,6 +100,8 @@ and eviction counters. The README documents the process-level PDFium concurrency
 - Benchmark JSON and human output report native PNG encoding separately from preview wall time.
 - Native package staging writes a deterministic artifact manifest with file sizes and SHA-256
   checksums. Release CI verifies the manifest and pinned PDFium build before publication.
+- The release workflow stages standalone `piff` CLI archives for Linux, macOS, and Windows with
+  the matching PDFium runtime, license notices, version sidecar, and checksum manifest.
 
 ### 5. Multi-document change sets — native graph path
 
@@ -118,8 +120,9 @@ pretends that one revision is globally “old” and another is globally “new�
   handles. Progress and cancellation still apply per graph edge.
 - Sequence page fingerprints are cached for the lifetime of the native document-set comparison, so
   a revision reused by multiple edges is fingerprinted once while matching remains edge-local.
+- Semantic page extraction is cached per revision/page in the native path; semantic block pairing,
+  role evidence, and change operations remain edge-specific.
 
-Semantic extraction remains edge-local because its output depends on the paired revision context.
 The browser/WASM fallback still evaluates edges through pair calls. Separate adjacent passwords and
 protected semantic PDFs use the established pair-level fallback so password and PDFium retry behavior
 stays correct. An all-pairs strategy and cross-candidate page alignment are also deliberately deferred

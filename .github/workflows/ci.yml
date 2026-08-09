@@ -122,5 +122,17 @@ jobs:
       - name: Stage native SDK binding
         run: node scripts/copy-native-module.mjs --target-dir target/release --output "$PIFF_NATIVE_MODULE"
 
+      - name: Build CLI binary
+        run: cargo build --locked --package piff --release
+
+      - name: Stage CLI artifact
+        run: node scripts/stage-cli-package.mjs --target linux-x64-gnu --binary target/release/piff --pdfium "$PDFIUM_LIBRARY_PATH" --pdfium-root artifacts/pdfium/linux-x64 --pdfium-tag "$PDFIUM_RELEASE_TAG" --output artifacts/cli/linux-x64-gnu
+
+      - name: Verify CLI artifact
+        run: node scripts/verify-cli-package.mjs --package artifacts/cli/linux-x64-gnu --target linux-x64-gnu --pdfium-tag "$PDFIUM_RELEASE_TAG"
+
+      - name: Smoke test packaged CLI
+        run: env -u PDFIUM_LIBRARY_PATH artifacts/cli/linux-x64-gnu/piff doctor --compact
+
       - name: Run hostile-input checks
         run: pnpm verify:hostile
