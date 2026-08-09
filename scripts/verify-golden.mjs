@@ -39,7 +39,6 @@ for (const fixture of manifest.fixtures) {
     ...fixture.options,
     ...(fixture.password === undefined ? {} : { password: fixture.password }),
   }
-  const warmup = fixture.expect.warmup === true ? await piff(before, after, options) : undefined
   const first = await piff(before, after, options)
   const second = await piff(before, after, options)
   assert.deepEqual(stableResult(first), stableResult(second), `${fixture.id} output is not deterministic`)
@@ -79,7 +78,6 @@ for (const fixture of manifest.fixtures) {
     afterPages: first.after.pageCount,
     equal: first.equal,
     statuses: statusCounts(first),
-    warmupChanged: warmup === undefined ? undefined : !deepEqual(stableResult(warmup), stableResult(first)),
     previewBytes: previewBytes?.byteLength,
     previewSha256: previewBytes === undefined ? undefined : sha256(previewBytes),
   })
@@ -126,15 +124,6 @@ function statusCounts(result) {
 
 function sha256(bytes) {
   return createHash('sha256').update(bytes).digest('hex')
-}
-
-function deepEqual(left, right) {
-  try {
-    assert.deepEqual(left, right)
-    return true
-  } catch {
-    return false
-  }
 }
 
 async function fileExists(path) {

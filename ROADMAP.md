@@ -71,9 +71,9 @@ non-negative. The optional golden runner now checks pinned real PDFs for forms, 
 fonts, scans, columns, encryption, and page matching. Fuzz targets exercise semantic normalization
 and the PDFium loading boundary.
 
-The encrypted golden fixture currently reports a one-time `warmupChanged` result during PDFium
-initialization. Repeated comparisons after that pass are stable, but the first-pass difference is
-still a renderer reliability issue.
+Encrypted semantic comparisons now perform an internal retry when PDFium reports a protected
+document, covering modern security revisions that `pdfium-render` cannot classify by number. The
+golden runner puts that fixture first and requires the first two public results to match.
 
 - Add golden fixtures for tables, repeated headers, malformed objects, ligatures, and figure
   changes that do not depend on external reference checkouts.

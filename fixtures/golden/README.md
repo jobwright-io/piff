@@ -25,10 +25,9 @@ Without `PIFF_GOLDEN_REQUIRED=1`, missing reference checkouts are reported as sk
 the ordinary CI path independent of third-party corpora while making an explicit corpus run fail
 closed when a source is unavailable or has changed.
 
-The encrypted fixture performs one warm-up comparison because the current PDFium build can return
-slightly different text segmentation on its first encrypted-document pass. The runner requires
-the next two passes to match and records `warmupChanged` in `artifacts/golden-report.json` when the
-renderer shows that behavior.
+The encrypted fixture is intentionally first in the manifest. The runner compares it twice from a
+fresh process and requires both results to match, covering PDFium's lazy encrypted-document state
+before the rest of the corpus runs.
 
 The source repositories are used under their own licenses. `pdfium-render` and Hayro are
 MIT/Apache-2.0 dual licensed. PDF Inspector is MIT licensed. Check the source checkout before

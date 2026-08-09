@@ -508,10 +508,29 @@ pub fn compare_files_with_passwords(
     let started = Instant::now();
     with_pdfium(library_path, |pdfium| {
         let load_started = Instant::now();
-        let before = load_pdf_from_file(pdfium, before_path.as_ref(), passwords.before, "before")?;
-        let after = load_pdf_from_file(pdfium, after_path.as_ref(), passwords.after, "after")?;
+        let (before, after) =
+            load_pdf_pair_from_files(pdfium, before_path.as_ref(), after_path.as_ref(), passwords)?;
         let load_ms = elapsed_ms(load_started);
-        compare_documents(&before, &after, options, started, load_ms, None, None)
+        let retry_encrypted = needs_encrypted_semantic_retry(options, &before, &after);
+        let first = compare_documents(&before, &after, options, started, load_ms, None, None)?;
+        if !retry_encrypted {
+            return Ok(first);
+        }
+
+        // PDFium lazily initializes text extraction for protected documents. Discard the
+        // initialization pass so callers receive the steady-state result on their first call.
+        let first_stats = first.stats;
+        drop(first);
+        drop(before);
+        drop(after);
+        let retry_started = Instant::now();
+        let (before, after) =
+            load_pdf_pair_from_files(pdfium, before_path.as_ref(), after_path.as_ref(), passwords)?;
+        let retry_load_ms = elapsed_ms(retry_started);
+        let mut result =
+            compare_documents(&before, &after, options, started, retry_load_ms, None, None)?;
+        add_retry_stats(&mut result, first_stats);
+        Ok(result)
     })
 }
 
@@ -591,8 +610,8 @@ pub fn compare_bytes_with_passwords_and_progress(
     let started = Instant::now();
     with_pdfium(library_path, |pdfium| {
         let load_started = Instant::now();
-        let before = load_pdf_from_bytes(pdfium, before_bytes, passwords.before, "before")?;
-        let after = load_pdf_from_bytes(pdfium, after_bytes, passwords.after, "after")?;
+        let (before, after) =
+            load_pdf_pair_from_byte_slices(pdfium, &before_bytes, &after_bytes, passwords)?;
         let load_ms = elapsed_ms(load_started);
         report_progress(
             progress,
@@ -602,15 +621,40 @@ pub fn compare_bytes_with_passwords_and_progress(
                 total: 1,
             },
         );
-        compare_documents(
+        let retry_encrypted = needs_encrypted_semantic_retry(options, &before, &after);
+        let first = compare_documents(
             &before,
             &after,
             options,
             started,
             load_ms,
+            None,
+            cancellation,
+        )?;
+        if !retry_encrypted {
+            return Ok(first);
+        }
+
+        let first_stats = first.stats;
+        drop(first);
+        ensure_not_cancelled(cancellation)?;
+        drop(before);
+        drop(after);
+        let retry_started = Instant::now();
+        let (before, after) =
+            load_pdf_pair_from_byte_slices(pdfium, &before_bytes, &after_bytes, passwords)?;
+        let retry_load_ms = elapsed_ms(retry_started);
+        let mut result = compare_documents(
+            &before,
+            &after,
+            options,
+            started,
+            retry_load_ms,
             progress,
             cancellation,
-        )
+        )?;
+        add_retry_stats(&mut result, first_stats);
+        Ok(result)
     })
 }
 
@@ -688,8 +732,8 @@ pub fn is_equal_bytes_with_passwords_and_progress(
         options
     };
     with_pdfium(library_path, |pdfium| {
-        let before = load_pdf_from_bytes(pdfium, before_bytes, passwords.before, "before")?;
-        let after = load_pdf_from_bytes(pdfium, after_bytes, passwords.after, "after")?;
+        let (before, after) =
+            load_pdf_pair_from_byte_slices(pdfium, &before_bytes, &after_bytes, passwords)?;
         report_progress(
             progress,
             ProgressEvent {
@@ -698,79 +742,99 @@ pub fn is_equal_bytes_with_passwords_and_progress(
                 total: 1,
             },
         );
-        let (page_pairs, _, _) =
-            build_page_pairs(&before, &after, options, progress, cancellation)?;
-        let mut role_evidence = DocumentRoleEvidence::default();
-
-        for (page_index, page_pair) in page_pairs.iter().copied().enumerate() {
-            ensure_not_cancelled(cancellation)?;
-            let (Some(before_page), Some(after_page)) = (page_pair.before, page_pair.after) else {
-                return Ok(false);
-            };
-            if page_pair.moved {
-                return Ok(false);
-            }
-            let before_page = before
-                .pages()
-                .get(before_page as i32)
-                .map_err(pdfium_error)?;
-            let after_page = after.pages().get(after_page as i32).map_err(pdfium_error)?;
-            if page_geometry(&before_page) != page_geometry(&after_page) {
-                return Ok(false);
-            }
-            let before_image = render_page(
-                &before_page,
-                options.dpi,
-                cancellation,
-                options.limits.max_page_pixels,
-            )?;
-            let after_image = render_page(
-                &after_page,
-                options.dpi,
-                cancellation,
-                options.limits.max_page_pixels,
-            )?;
-            report_progress(
-                progress,
-                ProgressEvent {
-                    phase: ProgressPhase::Rendering,
-                    completed: page_index + 1,
-                    total: page_pairs.len(),
-                },
-            );
-            if !compare_images_with_cancellation(&before_image, &after_image, options.diff, || {
-                cancellation.is_some_and(CancellationToken::is_cancelled)
-            })?
-            .equal
-            {
-                return Ok(false);
-            }
-            if matches!(options.mode, PiffMode::Semantic)
-                && !compare_semantic_pages(
-                    &before,
-                    &after,
-                    page_pair,
-                    options.reading_order,
-                    options.text_context_lines,
-                    cancellation,
-                    &mut role_evidence,
-                )?
-                .equal
-            {
-                return Ok(false);
-            }
-            report_progress(
-                progress,
-                ProgressEvent {
-                    phase: ProgressPhase::Comparing,
-                    completed: page_index + 1,
-                    total: page_pairs.len(),
-                },
-            );
+        let retry_encrypted = needs_encrypted_semantic_retry(options, &before, &after);
+        let first = is_equal_loaded_documents(&before, &after, options, None, cancellation)?;
+        if !retry_encrypted {
+            return Ok(first);
         }
 
-        Ok(true)
+        ensure_not_cancelled(cancellation)?;
+        drop(before);
+        drop(after);
+        let (before, after) =
+            load_pdf_pair_from_byte_slices(pdfium, &before_bytes, &after_bytes, passwords)?;
+        is_equal_loaded_documents(&before, &after, options, progress, cancellation)
     })
+}
+
+fn is_equal_loaded_documents(
+    before: &PdfDocument<'_>,
+    after: &PdfDocument<'_>,
+    options: PiffOptions,
+    progress: Option<&dyn Fn(ProgressEvent)>,
+    cancellation: Option<&CancellationToken>,
+) -> Result<bool, PiffError> {
+    let (page_pairs, _, _) = build_page_pairs(before, after, options, progress, cancellation)?;
+    let mut role_evidence = DocumentRoleEvidence::default();
+
+    for (page_index, page_pair) in page_pairs.iter().copied().enumerate() {
+        ensure_not_cancelled(cancellation)?;
+        let (Some(before_page), Some(after_page)) = (page_pair.before, page_pair.after) else {
+            return Ok(false);
+        };
+        if page_pair.moved {
+            return Ok(false);
+        }
+        let before_page = before
+            .pages()
+            .get(before_page as i32)
+            .map_err(pdfium_error)?;
+        let after_page = after.pages().get(after_page as i32).map_err(pdfium_error)?;
+        if page_geometry(&before_page) != page_geometry(&after_page) {
+            return Ok(false);
+        }
+        let before_image = render_page(
+            &before_page,
+            options.dpi,
+            cancellation,
+            options.limits.max_page_pixels,
+        )?;
+        let after_image = render_page(
+            &after_page,
+            options.dpi,
+            cancellation,
+            options.limits.max_page_pixels,
+        )?;
+        report_progress(
+            progress,
+            ProgressEvent {
+                phase: ProgressPhase::Rendering,
+                completed: page_index + 1,
+                total: page_pairs.len(),
+            },
+        );
+        if !compare_images_with_cancellation(&before_image, &after_image, options.diff, || {
+            cancellation.is_some_and(CancellationToken::is_cancelled)
+        })?
+        .equal
+        {
+            return Ok(false);
+        }
+        if matches!(options.mode, PiffMode::Semantic)
+            && !compare_semantic_pages(
+                before,
+                after,
+                page_pair,
+                options.reading_order,
+                options.text_context_lines,
+                cancellation,
+                &mut role_evidence,
+            )?
+            .equal
+        {
+            return Ok(false);
+        }
+        report_progress(
+            progress,
+            ProgressEvent {
+                phase: ProgressPhase::Comparing,
+                completed: page_index + 1,
+                total: page_pairs.len(),
+            },
+        );
+    }
+
+    Ok(true)
 }
 
 /// Renders one lazily requested page diff as a PNG.
@@ -2258,6 +2322,18 @@ fn load_pdf_from_file<'a>(
         .map_err(|error| pdfium_load_error(error, document))
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+fn load_pdf_pair_from_files<'a>(
+    pdfium: &'a Pdfium,
+    before_path: &Path,
+    after_path: &Path,
+    passwords: PdfPasswords<'_>,
+) -> Result<(PdfDocument<'a>, PdfDocument<'a>), PiffError> {
+    let before = load_pdf_from_file(pdfium, before_path, passwords.before, "before")?;
+    let after = load_pdf_from_file(pdfium, after_path, passwords.after, "after")?;
+    Ok((before, after))
+}
+
 fn load_pdf_from_bytes<'a>(
     pdfium: &'a Pdfium,
     bytes: Vec<u8>,
@@ -2267,6 +2343,50 @@ fn load_pdf_from_bytes<'a>(
     pdfium
         .load_pdf_from_byte_vec(bytes, password)
         .map_err(|error| pdfium_load_error(error, document))
+}
+
+fn load_pdf_pair_from_byte_slices<'a>(
+    pdfium: &'a Pdfium,
+    before_bytes: &'a [u8],
+    after_bytes: &'a [u8],
+    passwords: PdfPasswords<'_>,
+) -> Result<(PdfDocument<'a>, PdfDocument<'a>), PiffError> {
+    let before = pdfium
+        .load_pdf_from_byte_slice(before_bytes, passwords.before)
+        .map_err(|error| pdfium_load_error(error, "before"))?;
+    let after = pdfium
+        .load_pdf_from_byte_slice(after_bytes, passwords.after)
+        .map_err(|error| pdfium_load_error(error, "after"))?;
+    Ok((before, after))
+}
+
+fn is_encrypted(document: &PdfDocument<'_>) -> bool {
+    // pdfium-render 0.9.3 only names revisions 2 through 4. Modern encrypted
+    // files such as revision 6 therefore arrive as UnknownPdfSecurityHandlerRevision.
+    // A loaded document returning anything other than Unprotected still needs the
+    // protected-document retry path.
+    !matches!(
+        document.permissions().security_handler_revision(),
+        Ok(PdfSecurityHandlerRevision::Unprotected)
+    )
+}
+
+fn needs_encrypted_semantic_retry(
+    options: PiffOptions,
+    before: &PdfDocument<'_>,
+    after: &PdfDocument<'_>,
+) -> bool {
+    matches!(options.mode, PiffMode::Semantic) && (is_encrypted(before) || is_encrypted(after))
+}
+
+fn add_retry_stats(result: &mut PiffResult, first: PiffStats) {
+    result.stats.load_ms += first.load_ms;
+    result.stats.fingerprint_ms += first.fingerprint_ms;
+    result.stats.matching_ms += first.matching_ms;
+    result.stats.render_ms += first.render_ms;
+    result.stats.compare_ms += first.compare_ms;
+    result.stats.region_ms += first.region_ms;
+    result.stats.semantic_ms += first.semantic_ms;
 }
 
 fn pdfium_load_error(error: PdfiumError, document: &'static str) -> PiffError {
