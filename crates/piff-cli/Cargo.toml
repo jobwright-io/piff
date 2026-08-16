@@ -1,6 +1,6 @@
 [package]
 name = "piff"
-version = "0.2.0"
+version = "0.2.1"
 description = "Piff command-line PDF comparison tool"
 edition.workspace = true
 license.workspace = true
@@ -13,9 +13,9 @@ path = "src/main.rs"
 
 [dependencies]
 clap = { version = "4", features = ["derive", "env"] }
-piff-core = { path = "../piff-core", version = "0.2.0" }
-piff-semantic = { path = "../piff-semantic", version = "0.2.0" }
-piff-pdfium = { path = "../piff-pdfium", version = "0.2.0" }
+piff-core = { path = "../piff-core", version = "0.2.1" }
+piff-semantic = { path = "../piff-semantic", version = "0.2.1" }
+piff-pdfium = { path = "../piff-pdfium", version = "0.2.1" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

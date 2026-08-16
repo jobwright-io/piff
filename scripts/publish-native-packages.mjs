@@ -6,6 +6,7 @@ import { promisify } from 'node:util'
 const execFileAsync = promisify(execFile)
 const args = parseArgs(process.argv.slice(2))
 const root = resolve(required(args, 'root'))
+const registry = validateRegistry(required(args, 'registry'))
 
 const packageDirectories = []
 for (const artifact of await readdir(root, { withFileTypes: true })) {
@@ -24,7 +25,7 @@ if (packageDirectories.length === 0) {
 
 for (const packageDirectory of packageDirectories.sort()) {
   console.log(`publishing ${packageDirectory}`)
-  await execFileAsync('npm', ['publish', packageDirectory, '--access', 'public'], {
+  await execFileAsync('npm', ['publish', packageDirectory, '--access', 'public', '--registry', registry], {
     stdio: 'inherit',
   })
 }
@@ -56,4 +57,12 @@ function required(values, key) {
     throw new Error(`missing required argument --${key}`)
   }
   return value
+}
+
+function validateRegistry(value) {
+  const registry = new URL(value)
+  if (registry.protocol !== 'https:') {
+    throw new Error(`registry must use HTTPS: ${value}`)
+  }
+  return registry.href
 }

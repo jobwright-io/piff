@@ -304,7 +304,7 @@ for (const fixture of cases) {
   assert.equal(result.schemaVersion, 1)
   assert.deepEqual(result.engine, {
     name: 'piff',
-    version: '0.2.0',
+    version: '0.2.1',
     renderer: 'pdfium',
     binding: 'pdfium-render',
     pdfiumApi: '7881',

@@ -19,6 +19,10 @@ assert.equal(manifest.package.name, `@jobwright-io/piffjs-${target}`, 'native ar
 assert.equal(manifest.package.version, packageJson.version, 'native artifact package version mismatch')
 assert.ok(Array.isArray(manifest.files) && manifest.files.length > 0, 'native artifact file manifest is empty')
 assert.ok(packageJson.files?.includes('artifact-manifest.json'), 'package.json does not include artifact-manifest.json')
+assert.ok(packageJson.files?.includes('LICENSE'), 'package.json does not include the project license')
+assert.equal(packageJson.publishConfig?.access, 'public', 'native package must publish publicly')
+assert.equal(packageJson.publishConfig?.registry, undefined, 'native package must not pin a registry')
+assert.equal(packageJson.repository?.url, 'git+https://github.com/jobwright-io/piffjs.git', 'repository URL mismatch')
 
 const versionText = await readFile(join(packageRoot, 'pdfium/VERSION'), 'utf8')
 const pdfiumVersion = parsePdfiumVersion(versionText)

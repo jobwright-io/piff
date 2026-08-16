@@ -1,11 +1,25 @@
 {
   "name": "@jobwright-io/piffjs",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
+  "description": "Native Node.js and Bun SDK for deterministic visual and semantic PDF comparison",
   "license": "MIT",
+  "keywords": [
+    "pdf",
+    "diff",
+    "comparison",
+    "pdfium"
+  ],
+  "homepage": "https://github.com/jobwright-io/piffjs#readme",
+  "bugs": {
+    "url": "https://github.com/jobwright-io/piffjs/issues"
+  },
   "repository": {
     "type": "git",
-    "url": "https://github.com/jobwright-io/piffjs.git"
+    "url": "git+https://github.com/jobwright-io/piffjs.git"
+  },
+  "engines": {
+    "node": ">=22"
   },
   "type": "module",
   "files": ["dist"],

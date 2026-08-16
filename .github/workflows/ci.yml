@@ -79,8 +79,17 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
+      - name: Verify release versions
+        run: pnpm verify:release
+
       - name: Build packages
         run: pnpm build
+
+      - name: Verify npm package
+        run: |
+          node scripts/prepare-core-package.mjs --source packages/piff --output "$RUNNER_TEMP/piff-core-package"
+          node scripts/verify-core-package.mjs --package "$RUNNER_TEMP/piff-core-package"
+          npm pack "$RUNNER_TEMP/piff-core-package" --dry-run --json
 
   native-reliability:
     name: Native hostile-input checks

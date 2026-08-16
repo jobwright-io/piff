@@ -31,7 +31,7 @@ try {
     ok: true,
     engine: {
       name: 'piff',
-      version: '0.2.0',
+      version: '0.2.1',
       renderer: 'pdfium',
       binding: 'pdfium-render',
       pdfium_api: '7881',

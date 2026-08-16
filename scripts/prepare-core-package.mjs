@@ -1,5 +1,8 @@
 import { cp, mkdir, readFile, writeFile } from 'node:fs/promises'
-import { join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+import { readReleaseVersion } from './release-version.mjs'
 
 const TARGETS = [
   'linux-x64-gnu',
@@ -10,22 +13,31 @@ const TARGETS = [
 ]
 
 const args = parseArgs(process.argv.slice(2))
+const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const source = resolve(required(args, 'source'))
 const output = resolve(required(args, 'output'))
 const packageJson = JSON.parse(await readFile(join(source, 'package.json'), 'utf8'))
+const releaseVersion = await readReleaseVersion()
+
+if (packageJson.version !== releaseVersion) {
+  throw new Error(`core package version ${packageJson.version} does not match release version ${releaseVersion}`)
+}
 
 await mkdir(output, { recursive: true })
 await cp(join(source, 'dist'), join(output, 'dist'), { recursive: true })
+await cp(join(projectRoot, 'README.md'), join(output, 'README.md'))
+await cp(join(projectRoot, 'LICENSE'), join(output, 'LICENSE'))
 
 packageJson.private = false
+packageJson.files = [...new Set([...(packageJson.files ?? []), 'README.md', 'LICENSE'])]
 packageJson.optionalDependencies = Object.fromEntries(
   TARGETS.map((target) => [`@jobwright-io/piffjs-${target}`, packageJson.version]),
 )
 packageJson.publishConfig = {
   ...(packageJson.publishConfig ?? {}),
   access: 'public',
-  registry: 'https://npm.pkg.github.com',
 }
+delete packageJson.publishConfig.registry
 
 await writeFile(join(output, 'package.json'), `${JSON.stringify(packageJson, null, 2)}\n`)
 console.log(`prepared publishable ${packageJson.name}@${packageJson.version} at ${output}`)

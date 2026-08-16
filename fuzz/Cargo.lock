@@ -367,7 +367,7 @@ dependencies = [
 
 [[package]]
 name = "piff-core"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "image",
  "serde",
@@ -385,7 +385,7 @@ dependencies = [
 
 [[package]]
 name = "piff-pdfium"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "image",
  "pdfium-render",
@@ -397,7 +397,7 @@ dependencies = [
 
 [[package]]
 name = "piff-semantic"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "serde",
 ]

@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       publish:
-        description: Publish the staged native packages and generated core package to GitHub Packages
+        description: Publish JavaScript packages to npm and GitHub Packages, then publish Rust crates
         required: true
         default: false
         type: boolean
@@ -21,6 +21,7 @@ permissions:
 
 env:
   PDFIUM_RELEASE_TAG: ${{ inputs.pdfium_tag || '7881' }}
+  PIFF_REQUIRE_RELEASE_TAG: ${{ github.event_name == 'release' || inputs.publish == true }}
 
 jobs:
   wasm:
@@ -218,7 +219,7 @@ jobs:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: gh release upload "$RELEASE_TAG" artifacts/release/* --repo "$GITHUB_REPOSITORY" --clobber
 
-  publish:
+  publish-github:
     name: Publish GitHub Packages
     needs: build
     if: ${{ github.event_name == 'release' || inputs.publish == true }}
@@ -247,6 +248,9 @@ jobs:
       - name: Install JavaScript dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Verify release versions
+        run: pnpm verify:release
+
       - name: Build TypeScript packages
         run: pnpm build
 
@@ -260,15 +264,77 @@ jobs:
       - name: Publish platform packages
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: node scripts/publish-native-packages.mjs --root artifacts/native
+        run: node scripts/publish-native-packages.mjs --root artifacts/native --registry https://npm.pkg.github.com
 
       - name: Prepare core package metadata
         run: node scripts/prepare-core-package.mjs --source packages/piff --output artifacts/release/core
 
+      - name: Verify core package
+        run: node scripts/verify-core-package.mjs --package artifacts/release/core
+
       - name: Publish core package
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npm publish artifacts/release/core --access public
+        run: npm publish artifacts/release/core --access public --registry https://npm.pkg.github.com
+
+  publish-npm:
+    name: Publish npm
+    needs: build
+    if: ${{ github.event_name == 'release' || inputs.publish == true }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.9.0
+
+      - name: Install Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+
+      - name: Install JavaScript dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify release versions
+        run: pnpm verify:release
+
+      - name: Build TypeScript packages
+        run: pnpm build
+
+      - name: Download staged packages
+        uses: actions/download-artifact@v4
+        with:
+          pattern: native-*
+          path: artifacts/native
+          merge-multiple: false
+
+      - name: Publish platform packages
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_CONFIG_PROVENANCE: 'true'
+        run: node scripts/publish-native-packages.mjs --root artifacts/native --registry https://registry.npmjs.org
+
+      - name: Prepare core package metadata
+        run: node scripts/prepare-core-package.mjs --source packages/piff --output artifacts/release/core
+
+      - name: Verify core package
+        run: node scripts/verify-core-package.mjs --package artifacts/release/core
+
+      - name: Publish core package
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_CONFIG_PROVENANCE: 'true'
+        run: npm publish artifacts/release/core --access public --registry https://registry.npmjs.org
 
   publish-cargo:
     name: Publish crates.io packages

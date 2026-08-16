@@ -67,10 +67,9 @@ failed, and `130` means cancellation.
 
 The core package is `@jobwright-io/piffjs`:
 
-Configure the `@jobwright-io` scope to use GitHub Packages, then install it:
+Install it from the public npm registry:
 
 ```sh
-npm config set @jobwright-io:registry https://npm.pkg.github.com
 npm install @jobwright-io/piffjs
 ```
 
@@ -239,11 +238,13 @@ checkouts. Set `PIFF_GOLDEN_REQUIRED=1` when a missing or changed fixture should
 
 ## Release deployment
 
-The `Release packages` workflow publishes `@jobwright-io/piffjs`, its platform native packages to
-GitHub Packages, and the Rust crates. It runs for a published GitHub release or an explicit
-`workflow_dispatch` run with `publish` enabled. GitHub Packages publishing uses the workflow's
-scoped `GITHUB_TOKEN`; only the crates.io registry secret is needed. The
-React and browser adapter packages remain private until they have their own release contract. The
+The `Release packages` workflow publishes `@jobwright-io/piffjs` and its platform native packages
+to npm and GitHub Packages, then publishes the Rust crates. It runs for a published GitHub release
+or an explicit `workflow_dispatch` run with `publish` enabled from the matching version tag.
+GitHub Packages uses the workflow's scoped `GITHUB_TOKEN`. npm uses trusted publishing after the
+first release; the one-time `NPM_TOKEN` bootstrap secret should be revoked and removed once every
+npm package has its trusted publisher configured. Crates.io uses `CARGO_REGISTRY_TOKEN`. The React
+and browser adapter packages remain private until they have their own release contract. The
 native release targets glibc Linux, macOS, and Windows; musl Linux support remains a separate
 cross-compilation task. GitHub Releases also receive standalone `piff` CLI archives for those
 platforms. The CLI discovers the bundled PDFium library from its adjacent `pdfium/` directory.

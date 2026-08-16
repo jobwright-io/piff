@@ -1,6 +1,6 @@
 [package]
 name = "piff-core"
-version = "0.2.0"
+version = "0.2.1"
 description = "Renderer-independent image comparison primitives for PDF diffs"
 edition.workspace = true
 license.workspace = true

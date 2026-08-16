@@ -598,7 +598,7 @@ dependencies = [
 
 [[package]]
 name = "piff"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "clap",
  "piff-core",
@@ -611,7 +611,7 @@ dependencies = [
 
 [[package]]
 name = "piff-core"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "image",
  "serde",
@@ -620,7 +620,7 @@ dependencies = [
 
 [[package]]
 name = "piff-napi"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "napi",
  "napi-build",
@@ -633,7 +633,7 @@ dependencies = [
 
 [[package]]
 name = "piff-pdfium"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "image",
  "pdfium-render",
@@ -645,14 +645,14 @@ dependencies = [
 
 [[package]]
 name = "piff-semantic"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "piff-wasm"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "piff-core",
  "piff-pdfium",

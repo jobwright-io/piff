@@ -4,6 +4,7 @@ import { basename, dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { parsePdfiumVersion } from './pdfium-version.mjs'
+import { readReleaseVersion } from './release-version.mjs'
 
 const TARGETS = new Set([
   'linux-x64-gnu',
@@ -18,7 +19,12 @@ const target = required(args, 'target')
 const binaryPath = resolve(required(args, 'binary'))
 const pdfiumPath = resolve(required(args, 'pdfium'))
 const outputPath = resolve(required(args, 'output'))
-const packageVersion = args.version ?? '0.2.0'
+const releaseVersion = await readReleaseVersion()
+const packageVersion = args.version ?? releaseVersion
+
+if (packageVersion !== releaseVersion) {
+  throw new Error(`CLI package version ${packageVersion} does not match release version ${releaseVersion}`)
+}
 
 if (!TARGETS.has(target)) {
   throw new Error(`unsupported target "${target}"; expected one of ${[...TARGETS].join(', ')}`)

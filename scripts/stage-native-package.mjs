@@ -4,6 +4,7 @@ import { basename, dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { parsePdfiumVersion } from './pdfium-version.mjs'
+import { readReleaseVersion } from './release-version.mjs'
 
 const TARGETS = new Set([
   'linux-x64-gnu',
@@ -18,7 +19,12 @@ const target = required(args, 'target')
 const nativePath = resolve(required(args, 'native'))
 const pdfiumPath = resolve(required(args, 'pdfium'))
 const outputPath = resolve(required(args, 'output'))
-const packageVersion = args.version ?? '0.2.0'
+const releaseVersion = await readReleaseVersion()
+const packageVersion = args.version ?? releaseVersion
+
+if (packageVersion !== releaseVersion) {
+  throw new Error(`native package version ${packageVersion} does not match release version ${releaseVersion}`)
+}
 
 if (!TARGETS.has(target)) {
   throw new Error(`unsupported target "${target}"; expected one of ${[...TARGETS].join(', ')}`)
@@ -28,6 +34,7 @@ await assertFile(nativePath, 'native module')
 await assertFile(pdfiumPath, 'PDFium library')
 
 const packageName = `@jobwright-io/piffjs-${target}`
+const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const nativeFile = `piff_napi.${target}.node`
 const pdfiumFile = basename(pdfiumPath)
 const packagePdfiumPath = join(outputPath, 'pdfium', pdfiumFile)
@@ -52,6 +59,7 @@ await mkdir(join(outputPath, 'pdfium'), { recursive: true })
 await mkdir(join(outputPath, 'licenses'), { recursive: true })
 await cp(nativePath, join(outputPath, nativeFile))
 await cp(pdfiumPath, packagePdfiumPath)
+await cp(join(projectRoot, 'LICENSE'), join(outputPath, 'LICENSE'))
 await cp(pdfiumVersionPath, join(outputPath, 'pdfium', 'VERSION'))
 await copyIfPresent(join(pdfiumRoot, 'LICENSE'), join(outputPath, 'licenses', 'PDFIUM-LICENSE'))
 await copyIfPresent(join(pdfiumRoot, 'VERSION'), join(outputPath, 'licenses', 'PDFIUM-VERSION'))
@@ -71,7 +79,14 @@ await writeFile(
     license: 'MIT',
     repository: {
       type: 'git',
-      url: 'https://github.com/jobwright-io/piffjs.git',
+      url: 'git+https://github.com/jobwright-io/piffjs.git',
+    },
+    homepage: 'https://github.com/jobwright-io/piffjs#readme',
+    bugs: {
+      url: 'https://github.com/jobwright-io/piffjs/issues',
+    },
+    engines: {
+      node: '>=22',
     },
     type: 'commonjs',
     main: 'index.js',
@@ -80,6 +95,7 @@ await writeFile(
     ...(platform.libc === undefined ? {} : { libc: platform.libc }),
     files: [
       'index.js',
+      'LICENSE',
       nativeFile,
       'pdfium',
       'licenses',
@@ -87,7 +103,6 @@ await writeFile(
     ],
     publishConfig: {
       access: 'public',
-      registry: 'https://npm.pkg.github.com',
     },
   }, null, 2)}\n`,
 )
